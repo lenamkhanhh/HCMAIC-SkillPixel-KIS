@@ -7,15 +7,23 @@ import numpy as np
 import json
 import os
 import io
+import time
 from PIL import Image
 import torch
-from transformers import CLIPProcessor, CLIPModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPProcessor, CLIPModel
 import faiss
 from typing import List, Optional
+from pydantic import BaseModel
 from googletrans import Translator
 
-# from pydantic import BaseModel  # Not needed since we use plain dicts
 import uvicorn
+
+
+# Pydantic models for API requests
+class BatchSimilarityRequest(BaseModel):
+    frame_ids: List[int]
+    text_queries: List[str]
+
 
 # Configuration - Updated to match file 2's database structure
 DATABASE_FILE = "D:/keyframe_embeddings_clip.db"
@@ -23,6 +31,7 @@ FAISS_INDEX_FILE = "D:/keyframe_faiss_clip.index"
 FAISS_ID_MAP_FILE = "D:/keyframe_faiss_map_clip.json"
 EMBEDDING_DIM = 1280  # Adjust based on your embeddings
 CLIP_MODEL_NAME = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k"
+KEYWORD_PARSER_MODEL = None  # "Qwen/Qwen3-4B-Instruct-2507"
 
 app = FastAPI(title="Image Retrieval API", version="1.0.0")
 
@@ -68,8 +77,9 @@ def get_db_connection():
 
 
 # Model loading functions
-def load_clip_model():
+def load_models():
     global clip_model, clip_processor
+    global llm_model, llm_tokenizer
     try:
         print(f"Loading CLIP model: {CLIP_MODEL_NAME}")
         clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
@@ -77,9 +87,63 @@ def load_clip_model():
         clip_model = clip_model.to(device)
         clip_model.eval()
         print(f"CLIP model loaded successfully on {device}")
+        if KEYWORD_PARSER_MODEL is not None:
+            llm_tokenizer = AutoTokenizer.from_pretrained(KEYWORD_PARSER_MODEL)
+            llm_model = AutoModelForCausalLM.from_pretrained(
+                KEYWORD_PARSER_MODEL,
+                torch_dtype=(
+                    torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                ),
+                device_map="auto",
+            )
     except Exception as e:
         print(f"Error loading CLIP model: {e}")
         raise e
+
+
+def extract_subjects_actions(tokenizer, model, query: str) -> str:
+    system = (
+        "You are a helpful assistant that specializes in natural language. "
+        "Try to extract and list out all the subject, its features and some actions INSIDE of the query. "
+        "Only return the compact list like in the example; do not add any special character and do not add any new information that is not present in the query; NO EXPLANATION"
+        "Example 1:\n"
+        "- Input: On a white round plate is a glass of panna cotta. A hand places two more glasses of panna cotta on the plate. Each panna cotta has a smooth ivory cream layer, decorated with a few slices of red grapes and green mint leaves for a fresh highlight. Next to the plate are two edible flowers (red and yellow) to add to the beauty."
+        "- Output: white round plate, panna cotta glass, there is hand, panna cotta glasses, placing on plate, panna cotta, ivory white smooth cream, topped with red grape slices and green mint leaves plate, edible flowers (red and yellow), enhance portion"
+        "Example 2:\n"
+        "- Input: Find a cycling video, shot from an aerial drone, showing a cyclist in a blue and white jersey passing three other cyclists and taking the lead. Then, know that this cyclist leads the rest of the way to the finish line."
+        "- Output: bicycle racing video, overhead drone angle, athlete, blue and white shirt, overtaking three athletes, athlete, blue and white shirt, taking lead, athlete, blue and white shirt, led to finish"
+        "Example 3:\n"
+        "- Input: Video footage narrating a bicycle race. Find a scene with a head-on angle from above and follow the riders. In the frame, there are 3 riders pedaling in a straight line. All 3 riders are from the same team, with white uniforms and blue yellow pants. The first rider wears a white hat, the second rider wears a red hat, and the last rider wears a black hat."
+        "- Output: video footage, bicycle race, narrating scene, head-on angle from above, follow riders, 3 riders, pedaling, in straight line, 3 riders, same team, white uniforms, blue yellow pants, first rider, white hat, second rider, red hat, last rider, black hat"
+    )
+
+    prompt = f"{system}\nInput: {query}\nOutput:"
+
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    input_length = inputs.input_ids.shape[1]
+
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    with torch.inference_mode():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=50,
+            do_sample=False,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+
+    text = tokenizer.decode(
+        outputs.sequences[0, input_length:], skip_special_tokens=True
+    )
+
+    del inputs, outputs
+
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+    return text.strip().splitlines()[0].strip()
 
 
 def initialize_translator():
@@ -432,7 +496,7 @@ async def startup_event():
 
     try:
         print("Loading CLIP model...")
-        load_clip_model()
+        load_models()
         print("✅ CLIP model loaded successfully")
 
         print("Initializing translator...")
@@ -541,6 +605,10 @@ async def search_by_text(
         True, description="Auto-translate non-English queries to English"
     ),
     target_lang: str = Query("en", description="Target language for translation"),
+    use_keyword_parser: bool = Query(
+        True,
+        description="Whether to use LLM-based keyword parser to extract subjects/actions",
+    ),
 ):
     """Search images by text query with optional translation"""
     if not query.strip():
@@ -552,6 +620,13 @@ async def search_by_text(
     # Translate query if requested
     if translate:
         query, translated = translate_text(query, target_lang)
+
+    if use_keyword_parser and KEYWORD_PARSER_MODEL is not None:
+        try:
+            query = extract_subjects_actions(llm_tokenizer, llm_model, query)
+            print(f"Extracted query: {query}")
+        except Exception as e:
+            print(f"Keyword parser failed, falling back to raw query: {e}")
 
     try:
         # Encode text query
@@ -830,9 +905,180 @@ async def get_statistics():
     }
 
 
+@app.post("/similarity/frame-text")
+async def calculate_frame_text_similarity(
+    frame_id: int = Query(..., description="Frame ID to calculate similarity for"),
+    text_query: str = Query(..., description="Text query to compare against"),
+):
+    """Calculate similarity between a specific frame and text query"""
+    if not text_query.strip():
+        raise HTTPException(status_code=400, detail="Text query cannot be empty")
+
+    try:
+        # Get frame embedding from database
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT embedding FROM keyframe_embeddings WHERE id = ?", (frame_id,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or row["embedding"] is None:
+            raise HTTPException(
+                status_code=404, detail="Frame not found or no embedding available"
+            )
+
+        frame_embedding = row["embedding"]
+
+        # Ensure frame embedding is normalized
+        frame_embedding = frame_embedding / np.linalg.norm(frame_embedding)
+
+        # Get text embedding
+        text_embedding = encode_text(text_query)
+        text_embedding = text_embedding.flatten()
+
+        # Calculate cosine similarity
+        similarity = float(np.dot(frame_embedding, text_embedding))
+
+        # Clamp to [0, 1] range
+        similarity = max(0.0, min(1.0, similarity))
+
+        return {
+            "frame_id": frame_id,
+            "text_query": text_query,
+            "similarity": similarity,
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error calculating frame-text similarity: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Similarity calculation error: {str(e)}"
+        )
+
+
+@app.post("/similarity/batch-matrix")
+async def calculate_batch_similarity_matrix(request: BatchSimilarityRequest):
+    """Calculate similarity matrix for multiple frames and text queries in one batch operation"""
+    # Extract data from request body
+    frame_ids = request.frame_ids
+    text_queries = request.text_queries
+
+    if not frame_ids:
+        raise HTTPException(status_code=400, detail="Frame IDs list cannot be empty")
+    if not text_queries:
+        raise HTTPException(status_code=400, detail="Text queries list cannot be empty")
+
+    # Limit batch size to prevent memory issues
+    max_frames = 200
+    max_queries = 10
+
+    if len(frame_ids) > max_frames:
+        raise HTTPException(
+            status_code=400, detail=f"Too many frames. Maximum: {max_frames}"
+        )
+    if len(text_queries) > max_queries:
+        raise HTTPException(
+            status_code=400, detail=f"Too many queries. Maximum: {max_queries}"
+        )
+
+    try:
+        print(
+            f"🚀 Batch similarity computation: {len(text_queries)} queries × {len(frame_ids)} frames"
+        )
+        print(
+            f"📝 Frame IDs: {frame_ids[:5]}..."
+            if len(frame_ids) > 5
+            else f"📝 Frame IDs: {frame_ids}"
+        )
+        print(f"📝 Text queries: {text_queries}")
+        start_time = time.time()
+
+        # Get all frame embeddings in one database query
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ",".join(["?" for _ in frame_ids])
+        cursor.execute(
+            f"SELECT id, embedding FROM keyframe_embeddings WHERE id IN ({placeholders}) ORDER BY id",
+            frame_ids,
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        if len(rows) != len(frame_ids):
+            missing_ids = set(frame_ids) - {row["id"] for row in rows}
+            raise HTTPException(
+                status_code=404, detail=f"Frames not found: {list(missing_ids)}"
+            )
+
+        # Create ID to index mapping to preserve order
+        id_to_row = {row["id"]: row for row in rows}
+
+        # Build frame embeddings matrix [num_frames, embedding_dim] - preserve order
+        frame_embeddings = []
+        for frame_id in frame_ids:
+            embedding = id_to_row[frame_id]["embedding"]
+            if embedding is None:
+                raise HTTPException(
+                    status_code=404, detail=f"No embedding for frame {frame_id}"
+                )
+            # Normalize
+            embedding = embedding / np.linalg.norm(embedding)
+            frame_embeddings.append(embedding)
+
+        frame_embeddings_matrix = np.array(frame_embeddings).astype(
+            "float32"
+        )  # [num_frames, dim]
+
+        # Build text embeddings matrix [num_queries, embedding_dim]
+        text_embeddings = []
+        for query in text_queries:
+            if not query.strip():
+                raise HTTPException(
+                    status_code=400, detail="Text query cannot be empty"
+                )
+            text_embedding = encode_text(query.strip())
+            text_embeddings.append(text_embedding.flatten())
+
+        text_embeddings_matrix = np.array(text_embeddings).astype(
+            "float32"
+        )  # [num_queries, dim]
+
+        # Vectorized similarity computation: [num_queries, num_frames]
+        # similarity_matrix[i, j] = similarity between query i and frame j
+        similarity_matrix = np.dot(text_embeddings_matrix, frame_embeddings_matrix.T)
+
+        # Clamp to [0, 1] range
+        similarity_matrix = np.clip(similarity_matrix, 0.0, 1.0)
+
+        end_time = time.time()
+        computation_time = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        print(f"✅ Vectorized computation completed in {computation_time:.2f}ms")
+
+        return {
+            "frame_ids": frame_ids,
+            "text_queries": text_queries,
+            "similarity_matrix": similarity_matrix.tolist(),  # [num_queries, num_frames]
+            "shape": [len(text_queries), len(frame_ids)],
+            "computation_time_ms": computation_time,
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error calculating batch similarity matrix: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Batch similarity error: {str(e)}")
+
+
 # Serve static files (images) - Keep original path structure
 app.mount("/images", StaticFiles(directory="D:/keyframes"), name="images")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8002)

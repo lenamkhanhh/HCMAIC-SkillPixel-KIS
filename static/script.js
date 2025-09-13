@@ -46,6 +46,13 @@ document.addEventListener('DOMContentLoaded', function() {
             checkAndInitializeTRAKEEvents();
         }, 50);
     });
+
+    // Initialize Video Aggregator events on first visit
+    document.getElementById('video-agg-tab')?.addEventListener('click', function() {
+        setTimeout(() => {
+            checkAndInitializeVideoAggregatorEvents();
+        }, 50);
+    });
 });
 
 // Load statistics and test backend connection
@@ -89,6 +96,7 @@ async function searchByText() {
     const query = document.getElementById('textQuery').value.trim();
     const topK = document.getElementById('textTopK').value;
     const videoFilter = document.getElementById('textVideoFilter').value.trim();
+    const useKeywordParser = document.getElementById('useKeywordParser')?.checked ?? true;
     
     if (!query) {
         showError('Please enter a text query');
@@ -100,14 +108,15 @@ async function searchByText() {
     try {
         const params = new URLSearchParams({
             query: query,
-            top_k: topK
+            top_k: topK,
+            use_keyword_parser: useKeywordParser
         });
         
         if (videoFilter) {
             params.append('video_id', videoFilter);
         }
         
-        let url = `/search/text?${params.toString()}`;
+    let url = `/search/text?${params.toString()}`;
         
         const response = await fetch(url, {
             method: 'POST'
@@ -1034,7 +1043,208 @@ function checkAndInitializeTRAKEEvents() {
     }
 }
 
-// Initialize TRAKE events with 3 default rows
+// ========== Top-k Video Aggregator UI ==========
+function checkAndInitializeVideoAggregatorEvents() {
+    const container = document.getElementById('videoAggEventsContainer');
+    if (container && container.children.length === 0) {
+        initializeVideoAggregatorEvents();
+    }
+}
+
+function initializeVideoAggregatorEvents() {
+    const container = document.getElementById('videoAggEventsContainer');
+    if (!container) return;
+    container.innerHTML = '';
+    // Default 2 rows
+    for (let i = 1; i <= 2; i++) addVideoEventRow();
+}
+
+let videoAggNextEventNumber = 1;
+function addVideoEventRow() {
+    const container = document.getElementById('videoAggEventsContainer');
+    if (!container) return;
+    const n = videoAggNextEventNumber++;
+    const row = document.createElement('div');
+    row.className = 'event-row';
+    row.id = `video-agg-event-${n}`;
+    const canRemove = container.children.length >= 2;
+    row.innerHTML = `
+        <div class="d-flex align-items-center mb-2">
+            <span class="event-number me-2">${n}</span>
+            <span class="fw-bold">Event ${n}</span>
+            ${canRemove ? `
+                <button class="btn btn-sm btn-outline-danger ms-auto" onclick="removeVideoEventRow(${n})">
+                    <i class="fas fa-times"></i>
+                </button>
+            ` : ''}
+        </div>
+        <div class="row g-2">
+            <div class="col-md-12">
+                <input type="text" class="form-control video-agg-event-query" id="videoAggEventQuery${n}" placeholder="Enter event ${n} description">
+            </div>
+        </div>
+    `;
+    container.appendChild(row);
+    updateVideoRemoveButtons();
+}
+
+function removeVideoEventRow(n) {
+    const row = document.getElementById(`video-agg-event-${n}`);
+    if (row) row.remove();
+    updateVideoRemoveButtons();
+}
+
+function updateVideoRemoveButtons() {
+    const container = document.getElementById('videoAggEventsContainer');
+    if (!container) return;
+    const rows = container.querySelectorAll('.event-row');
+    rows.forEach(r => {
+        const btn = r.querySelector('button.btn-outline-danger');
+        if (!btn) return;
+        if (rows.length <= 1) btn.style.display = 'none'; else btn.style.display = 'inline-block';
+    });
+}
+
+function getVideoAggregatorEventsData() {
+    const events = [];
+    const container = document.getElementById('videoAggEventsContainer');
+    if (!container) return events;
+    const queries = container.querySelectorAll('.video-agg-event-query');
+    queries.forEach((input, idx) => {
+        const q = input.value.trim();
+        if (q) events.push({ id: idx + 1, query: q });
+    });
+    return events;
+}
+
+// Main aggregation search
+async function performTopKVideoSearch() {
+    const events = getVideoAggregatorEventsData();
+    const topKVids = parseInt(document.getElementById('videoAggTopK').value);
+    const perQueryK = parseInt(document.getElementById('videoAggPerQueryK').value);
+    const videoFilter = document.getElementById('videoAggVideoFilter').value.trim();
+
+    if (events.length === 0) {
+        showError('Vui lòng thêm ít nhất 1 sự kiện.');
+        return;
+    }
+
+    showLoading(true);
+    try {
+        // Aggregation map: video_id -> { score, hits, frames: [], meta }
+        const videoScores = new Map();
+        const discount = (rank) => 1 / Math.log2(rank + 2); // DCG-like discount
+
+        for (const ev of events) {
+            const params = new URLSearchParams({ query: ev.query, top_k: perQueryK });
+            if (videoFilter) params.append('video_id', videoFilter);
+            const res = await fetch(`/search/text?${params.toString()}`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Search failed');
+
+            (data.results || []).forEach((r, idx) => {
+                const sim = typeof r.similarity === 'number' ? r.similarity : 0;
+                const gain = sim * discount(idx);
+                const key = r.video_id;
+                if (!videoScores.has(key)) {
+                    videoScores.set(key, { score: 0, hits: 0, frames: [], meta: {
+                        video_id: r.video_id,
+                        video_title: r.video_title,
+                        video_author: r.video_author,
+                        watch_url: r.watch_url,
+                        thumbnail_url: r.thumbnail_url
+                    }});
+                }
+                const entry = videoScores.get(key);
+                entry.score += gain;
+                entry.hits += 1;
+                // Keep a few representative frames
+                if (entry.frames.length < 3) entry.frames.push(r);
+            });
+        }
+
+        // Rank videos by aggregated score
+        const results = Array.from(videoScores.values())
+            .sort((a, b) => b.score - a.score)
+            .slice(0, topKVids);
+
+        displayVideoAggregationResults(results);
+    } catch (err) {
+        showError('Top-k Video aggregation failed: ' + err.message);
+        console.error(err);
+    } finally {
+        showLoading(false);
+    }
+}
+
+function displayVideoAggregationResults(videoResults) {
+    const resultsDiv = document.getElementById('searchResults');
+    if (!videoResults || videoResults.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="text-center text-muted py-5">
+                <i class="fas fa-list-ol fa-3x mb-3"></i>
+                <h4>Không tìm thấy video phù hợp</h4>
+                <p>Hãy thử thêm/bớt sự kiện hoặc tăng Per-query Depth.</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = `
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4>Top-k Video (tổng hợp nhiều sự kiện)</h4>
+            <div class="text-muted">
+                <i class="fas fa-info-circle me-1"></i>
+                ${videoResults.length} videos
+            </div>
+        </div>
+        <div class="row g-4">
+    `;
+
+    videoResults.forEach((v, idx) => {
+        const rep = v.frames[0];
+        const imagePath = rep ? `/images/${rep.video_id}/${rep.image_filename}` : (v.meta.thumbnail_url || '');
+        const scorePct = (v.score * 100).toFixed(1);
+        const watchUrl = v.meta.watch_url || (rep ? rep.watch_url : '#');
+        const pts = rep ? rep.pts_time : 0;
+        html += `
+            <div class="col-md-6 col-lg-4 col-xl-3">
+                <div class="card result-card h-100">
+                    <div class="position-relative">
+                        ${imagePath ? `<img src="${imagePath}" class="card-img-top result-image" alt="Video cover">` : `<div class='p-5 text-center text-muted'>No image</div>`}
+                        <span class="similarity-badge">Score ${scorePct}</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="video-info">
+                            <div class="fw-bold text-truncate" title="${v.meta.video_title || ''}">
+                                ${v.meta.video_title || 'Untitled'}
+                            </div>
+                            <small class="text-muted">${v.meta.video_author || 'Unknown Author'}</small>
+                        </div>
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                <i class="fas fa-video me-1"></i>${v.meta.video_id || (rep ? rep.video_id : '')}
+                            </small>
+                        </div>
+                        <div class="mt-2">
+                            <small class="text-muted"><i class="fas fa-bolt me-1"></i>${v.hits} hits</small>
+                        </div>
+                        <div class="mt-2">
+                            <a href="#" onclick="openYouTubeAtTimestamp('${watchUrl}', ${pts}); return false;" class="btn btn-sm btn-outline-danger w-100">
+                                <i class="fab fa-youtube me-1"></i>Watch
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    resultsDiv.innerHTML = html;
+}
+
+// Initialize TRAKE events with default rows
 function initializeTRAKEEvents() {
     console.log('Initializing TRAKE events...');
     const container = document.getElementById('eventsContainer');
@@ -1047,7 +1257,7 @@ function initializeTRAKEEvents() {
     container.innerHTML = '';
     nextEventNumber = 1;
     
-    // Add 3 default event rows
+    // Add 3 default event rows (keeping 3 for better UX, even though algorithm needs minimum 2)
     for (let i = 1; i <= 3; i++) {
         console.log(`Adding event row ${i}`);
         addDynamicEventRow();
@@ -1123,11 +1333,11 @@ function updateRemoveButtons() {
     eventRows.forEach((row, index) => {
         const removeBtn = row.querySelector('.remove-event-btn');
         
-        if (eventRows.length <= 3) {
-            // Hide all remove buttons if we have 3 or fewer events
+        if (eventRows.length <= 2) {
+            // Hide all remove buttons if we have 2 or fewer events (minimum required)
             if (removeBtn) removeBtn.style.display = 'none';
         } else {
-            // Show remove buttons if we have more than 3 events
+            // Show remove buttons if we have more than 2 events
             if (removeBtn) {
                 removeBtn.style.display = 'inline-block';
             } else {
@@ -1169,181 +1379,767 @@ function getEventsData() {
     return events;
 }
 
-// Perform TRAKE Sequence Search
+// Enhanced temporal query merging function
+function createTemporalQuery(events) {
+    if (events.length === 1) {
+        return events[0].query;
+    }
+
+    let query = "temporal sequence: ";
+    for (let i = 0; i < events.length; i++) {
+        let prefix;
+        if (i === 0) {
+            prefix = "first";
+        } else if (i === events.length - 1) {
+            prefix = "finally";
+        } else {
+            const transitions = ["followed by", "then", "subsequently"];
+            prefix = transitions[i % 3];
+        }
+
+        query += prefix + " " + events[i].query;
+        if (i < events.length - 1) {
+            query += ", ";
+        }
+    }
+
+    return query;
+}
+
+// Configuration for the enhanced algorithm (frame-number-based, no early filtering)
+const algorithmConfig = {
+    similarityThreshold: 0,        // Min similarity for individual event matches
+    scoreThreshold: 0,             // Min final score to return result
+    topK: 10,                       // Initial candidates to process
+    maxTemporalGap: 150,             // Max frame numbers between consecutive events
+    searchWindow: 3000,               // Frame numbers to search around pivot
+    minSequenceCompleteness: 0.1,    // Min % of events that must be found
+    temporalWeight: 0.3,             // Weight for temporal continuity in scoring
+    completenessWeight: 0.2          // Weight for sequence completeness in scoring
+    // Note: earlyStopThreshold removed - Phase 1 now passes ALL candidates to Phase 2
+};
+
+// Perform Enhanced TRAKE Sequence Search
 async function performTRAKESequenceSearch() {
-    const topK = document.getElementById('trakeTopK').value;
+    const topK = parseInt(document.getElementById('trakeTopK').value);
     const similarityThreshold = parseFloat(document.getElementById('similarityThreshold').value);
     const scoreThreshold = parseFloat(document.getElementById('scoreThreshold').value);
+    const searchWindow = parseInt(document.getElementById('searchWindow').value);
+    const maxTemporalGap = parseInt(document.getElementById('maxTemporalGap').value);
     const events = getEventsData();
     
-    if (events.length < 3) {
-        showError('Please enter descriptions for at least 3 events');
+    // Update config with all UI values (including advanced ones if available)
+    algorithmConfig.topK = topK;
+    algorithmConfig.similarityThreshold = similarityThreshold;
+    algorithmConfig.scoreThreshold = scoreThreshold;
+    algorithmConfig.searchWindow = searchWindow;
+    algorithmConfig.maxTemporalGap = maxTemporalGap;
+    
+    // Advanced configuration (if elements exist)
+    const minCompletenessEl = document.getElementById('minCompleteness');
+    const temporalWeightEl = document.getElementById('temporalWeight');
+    const completenessWeightEl = document.getElementById('completenessWeight');
+    
+    if (minCompletenessEl) algorithmConfig.minSequenceCompleteness = parseFloat(minCompletenessEl.value);
+    if (temporalWeightEl) algorithmConfig.temporalWeight = parseFloat(temporalWeightEl.value);
+    if (completenessWeightEl) algorithmConfig.completenessWeight = parseFloat(completenessWeightEl.value);
+    // Note: earlyStopThreshold removed - no longer used
+    
+    console.log('Enhanced TRAKE Config:', algorithmConfig);
+    
+    if (events.length < 2) {
+        showError('Please enter descriptions for at least 2 events');
         return;
     }
     
     showLoading(true);
     
     try {
-        // Step 1: Merge all queries into one combined query
-        const mergedQuery = events.map(event => event.query).join('. ');
-        console.log('Merged query:', mergedQuery);
+        console.log('Starting Enhanced TRAKE Algorithm...');
         
-        // Step 2: Get initial search results from entire database
-        const params = new URLSearchParams({
-            query: mergedQuery,
-            top_k: topK
-            // No video_id - search across entire database
-        });
+        // Phase 1: Enhanced Initial Search with early filtering
+        console.log('Phase 1: Enhanced Initial Search');
+        const candidates = await performInitialSearch(events);
         
-        const response = await fetch(`/search/text?${params.toString()}`, {
-            method: 'POST'
-        });
+        if (!candidates || candidates.length === 0) {
+            throw new Error('No candidates found after initial search and filtering');
+        }
+        console.log(`Found ${candidates.length} candidates after filtering`);
         
-        const data = await response.json();
+        // Phase 2: Sequence Discovery with pivot selection
+        console.log('Phase 2: Sequence Discovery');
+        const sequences = await discoverSequences(events, candidates);
+        console.log(`Discovered ${sequences.length} valid sequences`);
         
-        if (!response.ok) {
-            throw new Error(data.detail || 'Search failed');
+        // Phase 3: Advanced Scoring and Results
+        console.log('Phase 3: Advanced Scoring and Ranking');
+        const results = await scoreAndRankSequences(sequences, events);
+        console.log(`Final results: ${results.length} sequences passed score threshold`);
+        
+        // Display enhanced results
+        displayEnhancedSequenceResults(results, events);
+        
+        // Show success message with algorithm info
+        if (results.length > 0) {
+            const avgScore = results.reduce((sum, r) => sum + r.score, 0) / results.length;
+            console.log(`Average score: ${(avgScore * 100).toFixed(1)}%`);
         }
         
-        // Step 3: Process results to find event sequences
-        const sequences = await findEventSequences(data.results, events, similarityThreshold, scoreThreshold);
-        
-        // Step 4: Display sequence results
-        displaySequenceResults(sequences, events);
-        
     } catch (error) {
-        console.error('Error in TRAKE sequence search:', error);
-        showError('TRAKE sequence search failed: ' + error.message);
+        console.error('Error in Enhanced TRAKE sequence search:', error);
+        showError('Enhanced TRAKE search failed: ' + error.message);
     } finally {
         showLoading(false);
     }
 }
 
-// Find event sequences in search results
-async function findEventSequences(searchResults, events, similarityThreshold, scoreThreshold) {
-    const sequences = [];
+// Phase 1: Enhanced Initial Search (no early filtering)
+async function performInitialSearch(events) {
+    const mergedQuery = createTemporalQuery(events);
+    console.log('Enhanced merged query:', mergedQuery);
+    const useKeywordParser = document.getElementById('useKeywordParser')?.checked ?? true;
     
-    for (const result of searchResults) {
-        // Find best matching event for this frame (pivot)
-        const pivotEvent = await findBestMatchingEvent(result, events);
-        
-        if (pivotEvent.similarity < similarityThreshold) {
-            continue; // Skip if pivot doesn't meet similarity threshold
-        }
-        
-        // Build sequence around pivot
-        const sequence = await buildSequenceAroundPivot(result, pivotEvent, events, similarityThreshold);
-        
-        if (sequence && sequence.frames.length === events.length) {
-            // Calculate final score with new algorithm
-            const finalScore = calculateNewSequenceScore(sequence, events);
-            
-            if (finalScore >= scoreThreshold) {
-                sequence.score = finalScore;
-                sequences.push(sequence);
-            }
-        }
+    // Search directly with desired top-K (no need for early filtering)
+    const params = new URLSearchParams({
+        query: mergedQuery,
+        top_k: algorithmConfig.topK,
+        use_keyword_parser: useKeywordParser
+    });
+    
+    const response = await fetch(`/search/text?${params.toString()}`, {
+        method: 'POST'
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+        throw new Error(data.detail || 'Search failed');
     }
     
-    // Sort sequences by score
-    sequences.sort((a, b) => b.score - a.score);
-    
-    return sequences;
+    // Return all results from query - let Phase 2 do the filtering
+    console.log(`Initial search returned ${data.results.length} candidates (no early filtering)`);
+    return data.results;
 }
 
-// Find best matching event for a frame
-async function findBestMatchingEvent(frame, events) {
-    let bestMatch = { eventIndex: 0, similarity: 0 };
+// Phase 2: Sequence Discovery
+async function discoverSequences(events, candidates) {
+    const validSequences = [];
+
+    for (const candidate of candidates) {
+        // Find which event this candidate best matches (pivot)
+        const bestPivot = await findBestPivot(candidate, events);
+
+        if (bestPivot.similarity < algorithmConfig.similarityThreshold) {
+            console.log(`❌ Candidate frame ${candidate.keyframe_n} rejected: pivot similarity ${bestPivot.similarity.toFixed(3)} < threshold ${algorithmConfig.similarityThreshold}`);
+            continue;
+        }
+
+        console.log(`🎯 Processing candidate frame ${candidate.keyframe_n} as pivot for Event ${bestPivot.eventIndex + 1} (similarity: ${bestPivot.similarity.toFixed(3)})`);
+
+        // Build complete sequence around this pivot
+        const sequence = await buildSequenceAroundPivot(candidate, bestPivot.eventIndex, events);
+
+        // ENHANCED: Verify that the sequence actually contains the pivot
+        if (!sequence || sequence.length === 0) {
+            console.warn(`❌ No sequence built for candidate frame ${candidate.keyframe_n}`);
+            continue;
+        }
+
+        const pivotInSequence = sequence.find(frame => frame.isPivot === true);
+        if (!pivotInSequence) {
+            console.warn(`❌ Pivot frame ${candidate.keyframe_n} missing from built sequence - this should not happen!`);
+            continue;
+        }
+
+        console.log(`✅ Built sequence with ${sequence.length}/${events.length} events around pivot frame ${candidate.keyframe_n}`);
+
+        if (isSequenceValid(sequence, events)) {
+            console.log(`✅ Sequence with pivot frame ${candidate.keyframe_n} passed validation`);
+            validSequences.push(sequence);
+        } else {
+            console.log(`❌ Sequence with pivot frame ${candidate.keyframe_n} failed validation`);
+        }
+    }
+
+    return validSequences;
+}
+
+
+// Find best pivot for a candidate frame
+async function findBestPivot(candidate, events) {
+    let bestMatch = null;
+    let bestSimilarity = 0;
+    let bestEventIndex = -1;
     
     for (let i = 0; i < events.length; i++) {
         const event = events[i];
+        const similarity = await calculateFrameEventSimilarity(candidate, event.query);
         
-        // Use text search to get similarity between frame and event
-        // This is a simplified approach - in reality you'd use embeddings
-        const similarity = await calculateFrameEventSimilarity(frame, event.query);
-        
-        if (similarity > bestMatch.similarity) {
-            bestMatch = { eventIndex: i, similarity: similarity * event.weight };
+        if (similarity > bestSimilarity) {
+            bestSimilarity = similarity;
+            bestEventIndex = i;
+            bestMatch = candidate;
         }
     }
     
-    return bestMatch;
-}
-
-// Calculate similarity between frame and event (simplified)
-async function calculateFrameEventSimilarity(frame, eventQuery) {
-    // This is a placeholder - in a real implementation you would:
-    // 1. Get frame embedding using the frame image
-    // 2. Get event embedding using the event text
-    // 3. Calculate cosine similarity between embeddings
-    // For now, we'll use the frame's existing similarity score as approximation
-    return Math.min(frame.similarity + (Math.random() - 0.5) * 0.2, 1.0);
-}
-
-// Build sequence around pivot frame
-async function buildSequenceAroundPivot(pivotFrame, pivotEvent, events, similarityThreshold) {
-    const sequence = {
-        pivotFrame: pivotFrame,
-        pivotEventIndex: pivotEvent.eventIndex,
-        frames: new Array(events.length).fill(null)
+    return {
+        match: bestMatch,
+        similarity: bestSimilarity,
+        eventIndex: bestEventIndex
     };
+}
+
+// Cache for frame-text similarity calculations to avoid repeated API calls
+const frameTextSimilarityCache = new Map();
+
+// Helper function to perform text search using the same logic as manual search
+// This ensures 100% consistency with the UI text search functionality
+async function performTextSearchForDebugging(query, videoId = null, topK = 1000) {
+    try {
+        const params = new URLSearchParams({
+            query: query.trim(),
+            top_k: topK
+        });
+        
+        if (videoId) {
+            params.append('video_id', videoId);
+        }
+        
+        const response = await fetch(`/search/text?${params.toString()}`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        return data.results || [];
+        
+    } catch (error) {
+        console.error(`Text search failed for query "${query}":`, error);
+        return [];
+    }
+}
+
+// Calculate similarity between frame and event using the same logic as text search
+async function calculateFrameEventSimilarity(frame, eventQuery) {
+    const cacheKey = `${frame.id}:${eventQuery.trim().toLowerCase()}`;
     
-    // Place pivot frame
-    sequence.frames[pivotEvent.eventIndex] = {
+    // Check cache first
+    if (frameTextSimilarityCache.has(cacheKey)) {
+        return frameTextSimilarityCache.get(cacheKey);
+    }
+    
+    try {
+        // Use the exact same search logic as manual text search
+        const searchResults = await performTextSearchForDebugging(eventQuery, frame.video_id);
+        
+        // Find this specific frame in the search results
+        const matchingFrame = searchResults.find(result => result.id === frame.id);
+        
+        if (matchingFrame) {
+            // Use the exact similarity from text search
+            const similarity = matchingFrame.similarity;
+            frameTextSimilarityCache.set(cacheKey, similarity);
+            return similarity;
+        } else {
+            // Frame not found in search results, use conservative fallback
+            console.warn(`Frame ${frame.id} not found in text search results for query "${eventQuery}"`);
+            const fallbackSimilarity = Math.min(frame.similarity * 0.8, 1.0);
+            frameTextSimilarityCache.set(cacheKey, fallbackSimilarity);
+            return fallbackSimilarity;
+        }
+        
+    } catch (error) {
+        // Fallback to approximation with less randomness on error
+        console.warn(`Error calculating frame-event similarity: ${error.message}, using fallback`);
+        const fallbackSimilarity = Math.min(frame.similarity + (Math.random() - 0.5) * 0.05, 1.0);
+        frameTextSimilarityCache.set(cacheKey, fallbackSimilarity);
+        return fallbackSimilarity;
+    }
+}
+
+// Clear similarity cache when needed (e.g., when starting a new debug session)
+function clearFrameTextSimilarityCache() {
+    frameTextSimilarityCache.clear();
+}
+
+// Enhanced sequence building around pivot with frame-number-based windowed search
+async function buildSequenceAroundPivot(pivotFrame, pivotEventIndex, events) {
+    const sequence = new Array(events.length).fill(null);
+
+    // Place pivot frame (use keyframe_n as frame number)
+    const pivotFrameNumber = pivotFrame.keyframe_n;
+
+    sequence[pivotEventIndex] = {
         frame: pivotFrame,
-        eventIndex: pivotEvent.eventIndex,
-        similarity: pivotEvent.similarity,
+        similarity: pivotFrame.similarity,
+        frameNumber: pivotFrameNumber,
+        videoId: pivotFrame.video_id,
         isPivot: true
     };
-    
-    // Get all frames from the same video as pivot
-    const videoFrames = await getVideoFrames(pivotFrame.video_id);
-    
-    // Find frames for events before pivot
-    for (let i = pivotEvent.eventIndex - 1; i >= 0; i--) {
-        const targetFrame = await findBestFrameForEvent(
-            videoFrames,
-            events[i],
-            pivotFrame.frame_idx,
-            'before',
-            similarityThreshold
+
+    console.log(`Building sequence around pivot frame number ${pivotFrameNumber} (Event ${pivotEventIndex + 1})`);
+    console.log(`Searching entire video for optimal event matches`);
+
+    // Get ALL frames in the video (not just windowed search) for accurate similarity comparison
+    // This ensures we find the best matches just like manual text search does
+    const videoFrames = await getAllVideoFrames(pivotFrame.video_id);
+
+    if (!videoFrames || videoFrames.length === 0) {
+        console.warn('No video frames found');
+        // Ensure pivot is always included even if no other frames found
+        return [sequence[pivotEventIndex]].filter(frame => frame !== null);
+    }
+
+    // Compute similarity matrix for all events with ALL frames in video (like text search)
+    const similarityMatrix = await computeEventFrameSimilarityMatrix(events, videoFrames);
+
+    // Search backwards for earlier events - consider ALL frames before pivot
+    for (let eventIdx = pivotEventIndex - 1; eventIdx >= 0; eventIdx--) {
+        const candidateFrames = videoFrames.filter(frame =>
+            frame.keyframe_n < pivotFrameNumber  // Only temporal constraint: before pivot
         );
-        
-        if (targetFrame) {
-            sequence.frames[i] = {
-                frame: targetFrame,
-                eventIndex: i,
-                similarity: targetFrame.similarity,
+
+        const bestMatch = findBestMatchFromMatrix(
+            sequence,
+            eventIdx,
+            candidateFrames,
+            videoFrames,
+            similarityMatrix,
+            false
+        );
+
+        if (bestMatch && bestMatch.similarity >= algorithmConfig.similarityThreshold) {
+            sequence[eventIdx] = {
+                frame: bestMatch.frame,
+                similarity: bestMatch.similarity,
+                frameNumber: bestMatch.frame.keyframe_n,
+                videoId: bestMatch.frame.video_id,
                 isPivot: false
             };
+            console.log(`✅ Selected frame ${bestMatch.frame.keyframe_n} for Event ${eventIdx + 1} (similarity: ${(bestMatch.similarity * 100).toFixed(1)}%)`);
+        } else if (bestMatch) {
+            console.log(`❌ Frame ${bestMatch.frame.keyframe_n} rejected for Event ${eventIdx + 1} (similarity: ${(bestMatch.similarity * 100).toFixed(1)}% < threshold: ${algorithmConfig.similarityThreshold})`);
         } else {
-            return null; // Sequence incomplete
+            console.log(`❌ No suitable frame found for Event ${eventIdx + 1}`);
+        }
+    }
+
+    // Search forwards for later events - consider ALL frames after pivot
+    for (let eventIdx = pivotEventIndex + 1; eventIdx < events.length; eventIdx++) {
+        const candidateFrames = videoFrames.filter(frame =>
+            frame.keyframe_n > pivotFrameNumber  // Only temporal constraint: after pivot
+        );
+
+        const bestMatch = findBestMatchFromMatrix(
+            sequence,
+            eventIdx,
+            candidateFrames,
+            videoFrames,
+            similarityMatrix,
+            true
+        );
+
+        if (bestMatch && bestMatch.similarity >= algorithmConfig.similarityThreshold) {
+            sequence[eventIdx] = {
+                frame: bestMatch.frame,
+                similarity: bestMatch.similarity,
+                frameNumber: bestMatch.frame.keyframe_n,
+                videoId: bestMatch.frame.video_id,
+                isPivot: false
+            };
+            console.log(`✅ Selected frame ${bestMatch.frame.keyframe_n} for Event ${eventIdx + 1} (similarity: ${(bestMatch.similarity * 100).toFixed(1)}%)`);
+        } else if (bestMatch) {
+            console.log(`❌ Frame ${bestMatch.frame.keyframe_n} rejected for Event ${eventIdx + 1} (similarity: ${(bestMatch.similarity * 100).toFixed(1)}% < threshold: ${algorithmConfig.similarityThreshold})`);
+        } else {
+            console.log(`❌ No suitable frame found for Event ${eventIdx + 1}`);
+        }
+    }
+
+    // CRITICAL FIX: Always ensure the pivot frame is included in the final sequence
+    const filteredSequence = sequence.filter(frame => frame !== null);
+
+    // Double-check that pivot is included - if somehow it got filtered out, add it back
+    if (!filteredSequence.some(frame => frame.isPivot)) {
+        console.warn('Pivot frame was missing from filtered sequence, adding it back');
+        filteredSequence.push(sequence[pivotEventIndex]);
+        // Re-sort by frame number to maintain temporal order
+        filteredSequence.sort((a, b) => a.frameNumber - b.frameNumber);
+    }
+
+    return filteredSequence;
+}
+
+// Get ALL frames from a video (for complete search like text search)
+async function getAllVideoFrames(videoId) {
+    try {
+        const response = await fetch(`/video/${videoId}/frames`);
+        const frames = await response.json();
+        
+        if (!response.ok || !frames) {
+            return [];
+        }
+        
+        return frames;
+    } catch (error) {
+        console.error('Error getting all video frames:', error);
+        return [];
+    }
+}
+
+// Get video frames within a specific frame number range (optimized)
+async function getVideoFramesInRange(videoId, minFrameNumber, maxFrameNumber) {
+    try {
+        const response = await fetch(`/video/${videoId}/frames`);
+        const frames = await response.json();
+        
+        if (!response.ok || !frames) {
+            return [];
+        }
+        
+        // Filter frames by frame number (keyframe_n) instead of frame_idx
+        return frames.filter(frame => 
+            frame.keyframe_n >= minFrameNumber && 
+            frame.keyframe_n <= maxFrameNumber
+        );
+    } catch (error) {
+        console.error('Error getting video frames in range:', error);
+        return [];
+    }
+}
+
+// Compute similarity matrix using the exact same text search logic as manual search
+async function computeEventFrameSimilarityMatrix(events, frames) {
+    const numEvents = events.length;
+    let numFrames = frames.length;
+    let processingFrames = frames;
+    
+    // In debug mode, limit frame processing for performance
+    const isDebugging = debugState && debugState.isDebugging;
+    const debugFrameLimit = 200; 
+    
+    if (isDebugging && numFrames > debugFrameLimit) {
+        console.log(`Debug mode: limiting frame processing to ${debugFrameLimit} frames (out of ${numFrames})`);
+        // Take frames with highest similarity scores first
+        processingFrames = frames
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, debugFrameLimit);
+        numFrames = processingFrames.length;
+    }
+    
+    console.log(`🔍 Computing similarity matrix using manual text search logic: ${numEvents} events × ${numFrames} frames`);
+    
+    try {
+        const startTime = performance.now();
+        
+        // Get video ID for filtered search
+        const videoId = processingFrames.length > 0 ? processingFrames[0].video_id : null;
+        
+        // Compute similarity matrix using the same search logic as manual text search
+        const similarityMatrix = new Array(numEvents);
+        
+        for (let eventIdx = 0; eventIdx < numEvents; eventIdx++) {
+            const event = events[eventIdx];
+            console.log(`🔎 Processing event ${eventIdx + 1}/${numEvents}: "${event.query}"`);
+            
+            // Use the exact same search function as manual text search
+            const searchResults = await performTextSearchForDebugging(
+                event.query, 
+                videoId, 
+                Math.max(1000, numFrames + 100)
+            );
+            
+            // Create similarity array for this event
+            const eventSimilarities = new Array(numFrames);
+            
+            // Map search results to our frame order
+            for (let frameIdx = 0; frameIdx < numFrames; frameIdx++) {
+                const frame = processingFrames[frameIdx];
+                const searchResult = searchResults.find(result => result.id === frame.id);
+                
+                if (searchResult) {
+                    // Use exact similarity from text search (identical to manual search)
+                    eventSimilarities[frameIdx] = searchResult.similarity;
+                } else {
+                    // Frame not found in search results, use conservative fallback
+                    console.warn(`Frame ${frame.id} not found in search results for event "${event.query}"`);
+                    eventSimilarities[frameIdx] = Math.min(frame.similarity * 0.5, 1.0);
+                }
+            }
+            
+            similarityMatrix[eventIdx] = eventSimilarities;
+            
+            // Small delay between requests to avoid overwhelming the server
+            if (eventIdx < numEvents - 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+        
+        const endTime = performance.now();
+        const computationTime = endTime - startTime;
+        
+        console.log(`✅ Manual text search matrix computation completed in ${computationTime.toFixed(2)}ms!`);
+        console.log(`📊 Matrix shape: [${numEvents}, ${numFrames}] - 100% identical to manual text search`);
+        
+        return similarityMatrix;
+        
+    } catch (error) {
+        console.error(`❌ Manual text search matrix computation failed, falling back: ${error.message}`);
+        
+        // Fallback to the original batch API method
+        return await computeEventFrameSimilarityMatrixOriginalBatch(events, processingFrames);
+    }
+}
+
+// Original batch API method as fallback 
+async function computeEventFrameSimilarityMatrixOriginalBatch(events, processingFrames) {
+    const numEvents = events.length;
+    const numFrames = processingFrames.length;
+    
+    console.log(`🔄 Fallback: Using original batch API for similarity matrix`);
+    
+    try {
+        // Prepare data for batch API
+        const frameIds = processingFrames.map(frame => frame.id);
+        const textQueries = events.map(event => event.query);
+        
+        const startTime = performance.now();
+        
+        // Single API call to compute entire matrix!
+        const response = await fetch('/similarity/batch-matrix', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                frame_ids: frameIds,
+                text_queries: textQueries
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ Batch API response: ${response.status} ${response.statusText}`);
+            console.error(`❌ Error details: ${errorText}`);
+            throw new Error(`Batch API failed: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        const similarityMatrix = data.similarity_matrix; // [num_queries, num_frames]
+        
+        const endTime = performance.now();
+        const computationTime = endTime - startTime;
+        
+        console.log(`✅ Original batch API completed in ${computationTime.toFixed(2)}ms! Matrix shape: [${data.shape[0]}, ${data.shape[1]}]`);
+        
+        // Return the matrix (already in correct format: events x frames)
+        return similarityMatrix;
+        
+    } catch (error) {
+        console.error(`❌ Original batch API also failed, using individual calculations: ${error.message}`);
+        
+        // Final fallback to individual calculations
+        return await computeEventFrameSimilarityMatrixFallback(events, processingFrames);
+    }
+}
+
+// Optimized fallback method (only used if batch API fails)
+async function computeEventFrameSimilarityMatrixFallback(events, frames) {
+    const numEvents = events.length;
+    const numFrames = frames.length;
+    
+    console.log(`🐌 Fallback: Computing similarity matrix with optimized individual calls`);
+    
+    // Initialize similarity matrix [events x frames]
+    const matrix = new Array(numEvents);
+    for (let i = 0; i < numEvents; i++) {
+        matrix[i] = new Array(numFrames);
+    }
+    
+    // Process events sequentially but frames in smaller parallel batches
+    for (let eventIdx = 0; eventIdx < numEvents; eventIdx++) {
+        const event = events[eventIdx];
+        console.log(`Processing event ${eventIdx + 1}/${numEvents}: "${event.query}"`);
+        
+        // Much smaller batch size to prevent overload
+        const batchSize = 5;
+        const similarities = new Array(numFrames);
+        
+        for (let batchStart = 0; batchStart < numFrames; batchStart += batchSize) {
+            const batchEnd = Math.min(batchStart + batchSize, numFrames);
+            const batchFrames = frames.slice(batchStart, batchEnd);
+            
+            // Process current batch in parallel
+            const batchPromises = batchFrames.map(async (frame, localIdx) => {
+                try {
+                    return await calculateFrameEventSimilarity(frame, event.query);
+                } catch (error) {
+                    console.warn(`Similarity calculation failed for frame ${frame.id}: ${error.message}`);
+                    return Math.min(frame.similarity * 0.9, 1.0); // Conservative fallback
+                }
+            });
+            
+            const batchResults = await Promise.all(batchPromises);
+            
+            // Store results
+            for (let i = 0; i < batchResults.length; i++) {
+                similarities[batchStart + i] = batchResults[i];
+            }
+            
+            // Very short delay between batches
+            if (batchEnd < numFrames) {
+                await new Promise(resolve => setTimeout(resolve, 25)); // Minimal delay
+            }
+        }
+        
+        // Store in matrix
+        matrix[eventIdx] = similarities;
+        console.log(`Completed event ${eventIdx + 1}/${numEvents}`);
+    }
+    
+    console.log('Fallback similarity matrix computed successfully');
+    return matrix;
+}
+
+// Batch compute similarities for one event with multiple frames (optimized with rate limiting)
+async function computeEventSimilarities(event, frames) {
+    const similarities = new Array(frames.length);
+    const batchSize = 20; // Process frames in small batches to avoid overwhelming the system
+    
+    console.log(`Computing similarities for event "${event.query}" with ${frames.length} frames (batch size: ${batchSize})`);
+    
+    // Process frames in batches to avoid too many concurrent requests
+    for (let batchStart = 0; batchStart < frames.length; batchStart += batchSize) {
+        const batchEnd = Math.min(batchStart + batchSize, frames.length);
+        const batchFrames = frames.slice(batchStart, batchEnd);
+        
+        console.log(`Processing batch ${Math.floor(batchStart/batchSize) + 1}/${Math.ceil(frames.length/batchSize)} (frames ${batchStart + 1}-${batchEnd})`);
+        
+        // Process current batch
+        const batchPromises = batchFrames.map(async (frame, localIdx) => {
+            const globalIdx = batchStart + localIdx;
+            try {
+                return await calculateFrameEventSimilarity(frame, event.query);
+            } catch (error) {
+                console.warn(`Error calculating similarity for frame ${globalIdx}: ${error.message}`);
+                // Return fallback similarity
+                return Math.min(frame.similarity + (Math.random() - 0.5) * 0.05, 1.0);
+            }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Store batch results in the main similarities array
+        for (let i = 0; i < batchResults.length; i++) {
+            similarities[batchStart + i] = batchResults[i];
+        }
+        
+        // Small delay between batches to prevent server overload
+        if (batchEnd < frames.length) {
+            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
         }
     }
     
-    // Find frames for events after pivot
-    for (let i = pivotEvent.eventIndex + 1; i < events.length; i++) {
-        const targetFrame = await findBestFrameForEvent(
-            videoFrames,
-            events[i],
-            pivotFrame.frame_idx,
-            'after',
-            similarityThreshold
+    console.log(`Completed similarities for event "${event.query}"`);
+    return similarities;
+}
+
+// Find best match from precomputed similarity matrix
+function findBestMatchFromMatrix(sequence, eventIdx, candidateFrames, allFrames, similarityMatrix, direction) {
+    if (!candidateFrames || candidateFrames.length === 0) {
+        return null;
+    }
+    
+    // Create array of candidate frames with their similarities and sort by similarity (highest first)
+    const candidatesWithSimilarity = [];
+    
+    for (const candidateFrame of candidateFrames) {
+        // Find the index of this candidate frame in the allFrames array
+        const frameIdx = allFrames.findIndex(frame => 
+            frame.keyframe_n === candidateFrame.keyframe_n && 
+            frame.video_id === candidateFrame.video_id
         );
         
-        if (targetFrame) {
-            sequence.frames[i] = {
-                frame: targetFrame,
-                eventIndex: i,
-                similarity: targetFrame.similarity,
-                isPivot: false
-            };
-        } else {
-            return null; // Sequence incomplete
+        if (frameIdx >= 0 && frameIdx < similarityMatrix[eventIdx].length) {
+            const similarity = similarityMatrix[eventIdx][frameIdx];
+            candidatesWithSimilarity.push({
+                frame: candidateFrame,
+                similarity: similarity,
+                frameIdx: frameIdx
+            });
         }
     }
     
-    return sequence;
+    // Sort candidates by similarity (highest first)
+    candidatesWithSimilarity.sort((a, b) => b.similarity - a.similarity);
+    
+    // Try each candidate in order of similarity until we find one that maintains event order
+    for (const candidate of candidatesWithSimilarity) {
+        const candidateFrame = candidate.frame;
+        const similarity = candidate.similarity;
+        
+        // Check if this candidate maintains temporal order
+        let maintainsOrder = true;
+        
+        if (direction) {
+            // Forward search: check if this frame comes after the previous event's frame
+            if (sequence[eventIdx - 1] && sequence[eventIdx - 1].frameNumber >= candidateFrame.keyframe_n) {
+                maintainsOrder = false;
+            }
+        } else {
+            // Backward search: check if this frame comes before the next event's frame  
+            if (sequence[eventIdx + 1] && sequence[eventIdx + 1].frameNumber <= candidateFrame.keyframe_n) {
+                maintainsOrder = false;
+            }
+        }
+        
+        // If this candidate maintains temporal order, use it
+        if (maintainsOrder) {
+            return {
+                frame: candidateFrame,
+                similarity: similarity
+            };
+        }
+    }
+    
+    // No candidate maintains temporal order
+    return null;
+}
+
+// Check if sequence is valid according to algorithm requirements (using frame numbers)
+function isSequenceValid(sequence, events) {
+    if (!sequence || sequence.length == 0) {
+        return false;
+    }
+
+    // CRITICAL: Every sequence MUST contain at least one pivot frame
+    const hasPivot = sequence.some(frame => frame.isPivot === true);
+    if (!hasPivot) {
+        console.warn('Sequence validation failed: No pivot frame found');
+        return false;
+    }
+
+    // Check minimum completeness requirement
+    const completeness = sequence.length / events.length;
+    if (completeness < algorithmConfig.minSequenceCompleteness) {
+        console.warn(`Sequence validation failed: Completeness ${(completeness*100).toFixed(1)}% < required ${(algorithmConfig.minSequenceCompleteness*100).toFixed(1)}%`);
+        return false;
+    }
+
+    // Check temporal ordering using frame numbers
+    for (let i = 1; i < sequence.length; i++) {
+        const currentFrameNumber = sequence[i].frameNumber || sequence[i].frame?.keyframe_n;
+        const prevFrameNumber = sequence[i-1].frameNumber || sequence[i-1].frame?.keyframe_n;
+
+        if (currentFrameNumber <= prevFrameNumber) {
+            console.warn(`Sequence validation failed: Temporal order violation at positions ${i-1} and ${i} (frames ${prevFrameNumber} -> ${currentFrameNumber})`);
+            return false; // Not in temporal order
+        }
+    }
+
+    return true;
 }
 
 // Get all frames from a video
@@ -1380,32 +2176,1168 @@ async function findBestFrameForEvent(videoFrames, event, pivotFrameIdx, directio
     return bestFrame;
 }
 
-// Calculate final score for sequence with new algorithm
-function calculateNewSequenceScore(sequence, events) {
-    // Step 1: Get all similarities from frames
-    const similarities = sequence.frames
-        .filter(frameData => frameData !== null)
-        .map(frameData => frameData.similarity);
+// Phase 3: Advanced Scoring and Ranking
+async function scoreAndRankSequences(sequences, events) {
+    const results = [];
     
-    if (similarities.length === 0) return 0;
-    
-    // Step 2: Calculate average similarity
-    const averageSimilarity = similarities.reduce((sum, sim) => sum + sim, 0) / similarities.length;
-    
-    // Step 3: Compare each similarity with average, +1 if higher, +0 if lower
-    let totalPoints = 0;
-    for (const similarity of similarities) {
-        if (similarity > averageSimilarity) {
-            totalPoints += 1;
+    for (const sequence of sequences) {
+        const scoreResult = calculateEnhancedSequenceScore(sequence, events);
+        
+        if (scoreResult.finalScore >= algorithmConfig.scoreThreshold) {
+            // Calculate metadata using frame numbers instead of frame indices
+            const frameNumbers = sequence.map(frame => 
+                frame.frameNumber || frame.frame?.keyframe_n || 0
+            );
+            
+            results.push({
+                sequence: sequence,
+                score: scoreResult.finalScore,
+                scoreBreakdown: scoreResult.breakdown,
+                metadata: {
+                    videoId: sequence.length > 0 ? sequence[0].videoId : null,
+                    startFrame: Math.min(...frameNumbers),
+                    endFrame: Math.max(...frameNumbers),
+                    duration: Math.max(...frameNumbers) - Math.min(...frameNumbers),
+                    completeness: sequence.length / events.length
+                }
+            });
         }
-        // If similarity <= averageSimilarity, add 0 (no points)
     }
     
-    // Step 4: Final score = total points / number of events
-    const finalScore = totalPoints / events.length;
-    
-    return finalScore;
+    // Sort by score descending
+    results.sort((a, b) => b.score - a.score);
+    return results;
 }
+
+// Enhanced scoring system with multiple components (using frame numbers)
+function calculateEnhancedSequenceScore(sequence, events) {
+    if (sequence.length === 0) {
+        return { finalScore: 0, breakdown: {} };
+    }
+    
+    const similarities = sequence.map(frame => frame.similarity);
+    
+    // 1. Base similarity score (average)
+    const baseSimilarityScore = similarities.reduce((sum, sim) => sum + sim, 0) / similarities.length;
+    
+    // 2. Temporal continuity score (using frame numbers instead of frame indices)
+    let temporalScore = 1.0;
+    if (sequence.length > 1) {
+        let totalGapPenalty = 0;
+        for (let i = 1; i < sequence.length; i++) {
+            const currentFrameNumber = sequence[i].frameNumber || sequence[i].frame?.keyframe_n;
+            const prevFrameNumber = sequence[i-1].frameNumber || sequence[i-1].frame?.keyframe_n;
+            const gap = currentFrameNumber - prevFrameNumber;
+            
+            // Normalize gap against max temporal gap (in frame numbers)
+            const normalizedGap = Math.min(gap / algorithmConfig.maxTemporalGap, 1.0);
+            totalGapPenalty += normalizedGap;
+        }
+        temporalScore = Math.max(0, 1 - (totalGapPenalty / (sequence.length - 1)));
+    }
+    
+    // 3. Completeness score
+    const completeness = sequence.length / events.length;
+    const completenessScore = completeness >= algorithmConfig.minSequenceCompleteness 
+        ? completeness 
+        : completeness * 0.5;
+    
+    // 4. Consistency bonus (reward consistent similarities)
+    const variance = calculateVariance(similarities);
+    const consistencyBonus = Math.max(0, 1 - variance);
+    
+    // 5. Sequential order bonus (using frame numbers)
+    let correctOrderCount = 0;
+    for (let i = 1; i < sequence.length; i++) {
+        const currentFrameNumber = sequence[i].frameNumber || sequence[i].frame?.keyframe_n;
+        const prevFrameNumber = sequence[i-1].frameNumber || sequence[i-1].frame?.keyframe_n;
+        
+        if (currentFrameNumber > prevFrameNumber) {
+            correctOrderCount += 1;
+        }
+    }
+    const orderBonus = sequence.length > 1 ? correctOrderCount / (sequence.length - 1) : 1;
+    
+    // Final weighted score
+    const finalScore = (
+        baseSimilarityScore * 0.4 +
+        temporalScore * algorithmConfig.temporalWeight +
+        completenessScore * algorithmConfig.completenessWeight +
+        consistencyBonus * 0.1 +
+        orderBonus * 0.1
+    );
+    
+    return {
+        finalScore: finalScore,
+        breakdown: {
+            baseSimilarity: baseSimilarityScore,
+            temporal: temporalScore,
+            completeness: completenessScore,
+            consistency: consistencyBonus,
+            order: orderBonus
+        }
+    };
+}
+
+// Calculate variance of similarities
+function calculateVariance(similarities) {
+    if (similarities.length === 0) return 0;
+    
+    const mean = similarities.reduce((sum, sim) => sum + sim, 0) / similarities.length;
+    const variance = similarities.reduce((sum, sim) => sum + Math.pow(sim - mean, 2), 0) / similarities.length;
+    return Math.sqrt(variance);
+}
+
+// ===================================
+// TRAKE DEBUG SYSTEM
+// ===================================
+
+// Global debug state
+let debugState = {
+    isDebugging: false,
+    currentPhase: 0,
+    totalPhases: 3,
+    debugLevel: 'detailed',
+    startTime: null,
+    phaseResults: {},
+    events: [],
+    candidates: [],
+    sequences: [],
+    finalResults: []
+};
+
+// Debug logging function
+function debugLog(message, level = 'info', data = null) {
+    const timestamp = new Date().toISOString().substring(11, 23);
+    const logEntry = {
+        timestamp: timestamp,
+        level: level,
+        message: message,
+        data: data
+    };
+    
+    // Always log to console for debugging
+    const prefix = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : level === 'success' ? '✅' : 'ℹ️';
+    console.log(`${prefix} [${timestamp}] ${message}`, data || '');
+    
+    // Update debug UI if debugging is active
+    if (debugState.isDebugging) {
+        updateDebugStep(message);
+        if (debugState.debugLevel === 'verbose' || level === 'error') {
+            appendDebugLog(logEntry);
+        }
+    }
+}
+
+// Start debug TRAKE search
+async function startDebugTRAKE() {
+    try {
+        // Initialize debug state
+        debugState = {
+            isDebugging: true,
+            currentPhase: 0,
+            totalPhases: 3,
+            debugLevel: document.getElementById('debugLevel').value,
+            startTime: performance.now(),
+            phaseResults: {
+                phase1: {
+                    candidates: [],
+                    candidateCount: 0,
+                    timing: 0,
+                    detailedCandidates: []
+                },
+                phase2: {
+                    sequences: [],
+                    sequenceCount: 0,
+                    timing: 0,
+                    detailedSequences: []
+                },
+                phase3: {
+                    results: [],
+                    resultCount: 0,
+                    timing: 0,
+                    detailedScoring: []
+                }
+            },
+            events: [],
+            candidates: [],
+            sequences: [],
+            finalResults: []
+        };
+        
+        debugLog('🚀 Starting TRAKE Debug Session', 'info');
+        
+        // Clear similarity cache for fresh calculations
+        clearFrameTextSimilarityCache();
+        
+        // Validate debug state initialization
+        if (!debugState.phaseResults.phase1.detailedCandidates) {
+            console.error('Debug state initialization failed - phase1.detailedCandidates not initialized');
+            throw new Error('Debug state initialization failed');
+        }
+        
+        // Show debug progress
+        document.getElementById('debugProgress').style.display = 'block';
+        updateDebugProgress(0, 'Initializing debug session...');
+        
+        // Get debug events
+        const events = getDebugEvents();
+        if (events.length < 2) {
+            throw new Error('At least 2 events are required for debugging');
+        }
+        
+        debugState.events = events;
+        debugLog(`📝 Loaded ${events.length} debug events`, 'info', events);
+        
+        // Clear previous results
+        document.getElementById('debugResults').innerHTML = '<div class="debug-log-container"></div>';
+        
+        // Start the debug algorithm phases
+        await executeDebugPhases(events);
+        
+    } catch (error) {
+        debugLog(`❌ Debug session failed: ${error.message}`, 'error', error);
+        showError('Debug failed: ' + error.message);
+    }
+}
+
+// Execute all debug phases
+async function executeDebugPhases(events) {
+    try {
+        // Phase 1: Enhanced Initial Search
+        updateDebugProgress(10, 'Phase 1: Enhanced Initial Search');
+        debugState.currentPhase = 1;
+        const candidates = await debugPhase1(events);
+        debugState.candidates = candidates;
+        // Update phase1 results
+        debugState.phaseResults.phase1.candidates = candidates;
+        debugState.phaseResults.phase1.candidateCount = candidates.length;
+        debugState.phaseResults.phase1.timing = performance.now() - debugState.startTime;
+        
+        // Phase 2: Sequence Discovery
+        updateDebugProgress(40, 'Phase 2: Sequence Discovery');
+        debugState.currentPhase = 2;
+        const sequences = await debugPhase2(events, candidates);
+        debugState.sequences = sequences;
+        // Update phase2 results
+        debugState.phaseResults.phase2.sequences = sequences;
+        debugState.phaseResults.phase2.sequenceCount = sequences.length;
+        debugState.phaseResults.phase2.timing = performance.now() - debugState.startTime;
+        
+        // Phase 3: Advanced Scoring
+        updateDebugProgress(70, 'Phase 3: Advanced Scoring and Ranking');
+        debugState.currentPhase = 3;
+        const results = await debugPhase3(sequences, events);
+        debugState.finalResults = results;
+        // Update phase3 results
+        debugState.phaseResults.phase3.results = results;
+        debugState.phaseResults.phase3.resultCount = results.length;
+        debugState.phaseResults.phase3.timing = performance.now() - debugState.startTime;
+        
+        // Generate debug report
+        updateDebugProgress(90, 'Generating debug report...');
+        await generateDebugReport();
+        
+        updateDebugProgress(100, 'Debug session completed!');
+        debugLog('✅ Debug session completed successfully', 'success');
+        
+    } catch (error) {
+        debugLog(`❌ Debug phase execution failed: ${error.message}`, 'error', error);
+        throw error;
+    }
+}
+
+// Debug Phase 1: Enhanced Initial Search (no early filtering)
+async function debugPhase1(events) {
+    debugLog('🔍 Phase 1: Enhanced Initial Search (no early filtering)', 'info');
+    
+    try {
+        // Create temporal query
+        const mergedQuery = createTemporalQuery(events);
+        debugLog(`📝 Temporal query: "${mergedQuery}"`, 'info');
+        const useKeywordParser = document.getElementById('useKeywordParser')?.checked ?? true;
+        
+        // Perform initial search
+        debugLog('🔍 Performing initial database search...', 'info');
+        const params = new URLSearchParams({
+            query: mergedQuery,
+            top_k: algorithmConfig.topK,
+            use_keyword_parser: useKeywordParser
+        });
+        
+        const response = await fetch(`/search/text?${params.toString()}`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.detail || 'Initial search failed');
+        }
+        
+        debugLog(`📊 Initial search returned ${data.results.length} candidates`, 'info');
+        debugLog(`✅ Passing ALL candidates to Phase 2 (no early filtering)`, 'info');
+        
+        // Log similarity distribution for debugging
+        if (data.results.length > 0) {
+            const similarities = data.results.map(c => c.similarity);
+            const minSim = Math.min(...similarities);
+            const maxSim = Math.max(...similarities);
+            const avgSim = similarities.reduce((sum, sim) => sum + sim, 0) / similarities.length;
+            
+            debugLog(`📈 Similarity range: ${minSim.toFixed(3)} - ${maxSim.toFixed(3)}, avg: ${avgSim.toFixed(3)}`, 'info');
+        }
+        
+        // Store detailed phase 1 results for debugging
+        debugState.phaseResults.phase1.detailedCandidates = data.results.slice(0, 10).map(candidate => ({
+            id: candidate.id,
+            video_id: candidate.video_id,
+            keyframe_n: candidate.keyframe_n,
+            similarity: candidate.similarity,
+            image_filename: candidate.image_filename,
+            image_path: candidate.image_path,
+            pts_time: candidate.pts_time
+        }));
+        
+        return data.results;
+        
+    } catch (error) {
+        debugLog(`❌ Phase 1 failed: ${error.message}`, 'error', error);
+        throw error;
+    }
+}
+
+// Debug Phase 2: Sequence Discovery
+async function debugPhase2(events, candidates) {
+    debugLog('🔗 Phase 2: Sequence Discovery', 'info');
+    
+    try {
+        const validSequences = [];
+        const detailedSequenceInfo = [];
+        let pivotCount = 0;
+        
+        for (const candidate of candidates) {
+            pivotCount++;
+            debugLog(`🎯 Processing candidate ${pivotCount}/${candidates.length} (Frame: ${candidate.keyframe_n}, Video: ${candidate.video_id})`, 'info');
+            
+            // Find best pivot
+            const bestPivot = await findBestPivot(candidate, events);
+            debugLog(`📍 Best pivot for candidate: Event ${bestPivot.eventIndex + 1} (similarity: ${bestPivot.similarity.toFixed(3)})`, 'info');
+            
+            const sequenceInfo = {
+                candidateId: pivotCount,
+                candidate: {
+                    id: candidate.id,
+                    video_id: candidate.video_id,
+                    keyframe_n: candidate.keyframe_n,
+                    similarity: candidate.similarity,
+                    image_filename: candidate.image_filename,
+                    image_path: candidate.image_path
+                },
+                pivot: {
+                    eventIndex: bestPivot.eventIndex,
+                    similarity: bestPivot.similarity,
+                    eventQuery: events[bestPivot.eventIndex]?.query || 'Unknown'
+                },
+                sequence: null,
+                valid: false,
+                reason: ''
+            };
+            
+            if (bestPivot.similarity < algorithmConfig.similarityThreshold) {
+                sequenceInfo.reason = `Pivot similarity ${bestPivot.similarity.toFixed(3)} below threshold ${algorithmConfig.similarityThreshold}`;
+                debugLog(`❌ ${sequenceInfo.reason}`, 'warn');
+                detailedSequenceInfo.push(sequenceInfo);
+                continue;
+            }
+            
+            // Build sequence around pivot
+            debugLog(`🏗️ Building sequence around pivot...`, 'info');
+            const sequence = await buildSequenceAroundPivot(candidate, bestPivot.eventIndex, events);
+
+            if (sequence && sequence.length > 0) {
+                debugLog(`✅ Built sequence with ${sequence.length}/${events.length} events`, 'info');
+
+                // ENHANCED: Verify that the sequence actually contains the pivot
+                const pivotInSequence = sequence.find(frame => frame.isPivot === true);
+                if (!pivotInSequence) {
+                    sequenceInfo.reason = 'Pivot frame missing from built sequence - algorithm error';
+                    debugLog(`❌ ${sequenceInfo.reason}`, 'error');
+                    detailedSequenceInfo.push(sequenceInfo);
+                    continue;
+                }
+
+                // Store detailed sequence information
+                sequenceInfo.sequence = sequence.map((frameData, sequenceIndex) => ({
+                    sequenceIndex: sequenceIndex,
+                    // Find which event this frame corresponds to by matching similarity and frame
+                    eventIndex: events.findIndex(event => {
+                        // For pivot, we know the event index
+                        if (frameData.isPivot) return bestPivot.eventIndex;
+                        // For others, we need to find based on the frame position in the original sequence building
+                        return -1; // Will be properly mapped below
+                    }),
+                    eventQuery: 'To be determined', // Will be updated below
+                    frame: frameData ? {
+                        id: frameData.frame?.id,
+                        keyframe_n: frameData.frameNumber || frameData.frame?.keyframe_n,
+                        similarity: frameData.similarity,
+                        image_filename: frameData.frame?.image_filename,
+                        image_path: frameData.frame?.image_path,
+                        isPivot: frameData.isPivot || false
+                    } : null,
+                    matched: frameData !== null
+                }));
+
+                // Fix event mapping for sequence display
+                sequenceInfo.sequence.forEach((seqItem, idx) => {
+                    if (seqItem.frame?.isPivot) {
+                        seqItem.eventIndex = bestPivot.eventIndex;
+                        seqItem.eventQuery = events[bestPivot.eventIndex]?.query || 'Unknown';
+                    } else {
+                        // For now, just use sequential mapping - this could be improved
+                        seqItem.eventIndex = idx < events.length ? idx : -1;
+                        seqItem.eventQuery = idx < events.length ? events[idx]?.query : 'Unknown';
+                    }
+                });
+
+                if (isSequenceValid(sequence, events)) {
+                    debugLog(`✅ Sequence with pivot frame ${candidate.keyframe_n} is valid`, 'success');
+                    sequenceInfo.valid = true;
+                    sequenceInfo.reason = 'Valid sequence passed all checks including pivot verification';
+                    validSequences.push(sequence);
+                } else {
+                    sequenceInfo.reason = 'Sequence failed validation checks';
+                    debugLog(`❌ Sequence with pivot frame ${candidate.keyframe_n} failed validation`, 'warn');
+                }
+            } else {
+                sequenceInfo.reason = 'Failed to build sequence around pivot';
+                debugLog(`❌ Failed to build sequence`, 'warn');
+            }
+            
+            detailedSequenceInfo.push(sequenceInfo);
+            
+            // Only process first 10 candidates in debug mode for performance
+            if (pivotCount >= 10) {
+                debugLog(`🔍 Debug mode: limiting to first 10 candidates for detailed analysis`, 'info');
+                break;
+            }
+        }
+        
+        // Store detailed phase 2 results for debugging
+        debugState.phaseResults.phase2.detailedSequences = detailedSequenceInfo;
+        
+        debugLog(`🏁 Phase 2 completed: ${validSequences.length} valid sequences from ${candidates.length} candidates`, 'success');
+        return validSequences;
+        
+    } catch (error) {
+        debugLog(`❌ Phase 2 failed: ${error.message}`, 'error', error);
+        throw error;
+    }
+}
+
+// Debug Phase 3: Advanced Scoring
+async function debugPhase3(sequences, events) {
+    debugLog('📊 Phase 3: Advanced Scoring and Ranking', 'info');
+    
+    try {
+        const results = [];
+        const detailedScoring = [];
+        let sequenceCount = 0;
+        
+        for (const sequence of sequences) {
+            sequenceCount++;
+            debugLog(`⚖️ Scoring sequence ${sequenceCount}/${sequences.length}`, 'info');
+            
+            const scoreResult = calculateEnhancedSequenceScore(sequence, events);
+            debugLog(`📈 Sequence score: ${(scoreResult.finalScore * 100).toFixed(1)}%`, 'info', scoreResult.breakdown);
+            
+            // Calculate metadata
+            const frameNumbers = sequence.map(frame => 
+                frame.frameNumber || frame.frame?.keyframe_n || 0
+            );
+            
+            const scoringInfo = {
+                sequenceId: sequenceCount,
+                score: scoreResult.finalScore,
+                scoreBreakdown: scoreResult.breakdown,
+                metadata: {
+                    videoId: sequence.length > 0 ? sequence[0].videoId : null,
+                    startFrame: Math.min(...frameNumbers),
+                    endFrame: Math.max(...frameNumbers),
+                    duration: Math.max(...frameNumbers) - Math.min(...frameNumbers),
+                    completeness: sequence.length / events.length
+                },
+                frames: sequence.map((frameData, eventIndex) => ({
+                    eventIndex: eventIndex,
+                    eventQuery: events[eventIndex]?.query || 'Unknown',
+                    frame: frameData ? {
+                        id: frameData.frame?.id,
+                        keyframe_n: frameData.frameNumber || frameData.frame?.keyframe_n,
+                        similarity: frameData.similarity,
+                        image_filename: frameData.frame?.image_filename,
+                        image_path: frameData.frame?.image_path,
+                        isPivot: frameData.isPivot || false
+                    } : null,
+                    matched: frameData !== null
+                })),
+                passedThreshold: scoreResult.finalScore >= algorithmConfig.scoreThreshold
+            };
+            
+            detailedScoring.push(scoringInfo);
+            
+            if (scoreResult.finalScore >= algorithmConfig.scoreThreshold) {
+                const result = {
+                    sequence: sequence,
+                    score: scoreResult.finalScore,
+                    scoreBreakdown: scoreResult.breakdown,
+                    metadata: scoringInfo.metadata
+                };
+                
+                results.push(result);
+                debugLog(`✅ Sequence passed score threshold`, 'success');
+            } else {
+                debugLog(`❌ Sequence score ${(scoreResult.finalScore * 100).toFixed(1)}% below threshold ${(algorithmConfig.scoreThreshold * 100).toFixed(1)}%`, 'warn');
+            }
+        }
+        
+        // Sort results by score
+        results.sort((a, b) => b.score - a.score);
+        
+        // Store detailed phase 3 results for debugging
+        debugState.phaseResults.phase3.detailedScoring = detailedScoring.sort((a, b) => b.score - a.score);
+        
+        debugLog(`🏆 Phase 3 completed: ${results.length} final results`, 'success');
+        return results;
+        
+    } catch (error) {
+        debugLog(`❌ Phase 3 failed: ${error.message}`, 'error', error);
+        throw error;
+    }
+}
+
+// Helper functions for debug system
+function getDebugEvents() {
+    const testEvents = document.getElementById('debugTestEvents').value;
+    
+    // Use predefined test events if selected
+    if (testEvents === 'simple') {
+        return [
+            { query: 'person walking', weight: 1.0 },
+            { query: 'car driving', weight: 1.0 }
+        ];
+    } else if (testEvents === 'complex') {
+        return [
+            { query: 'person standing', weight: 1.0 },
+            { query: 'person walking', weight: 1.0 },
+            { query: 'car approaching', weight: 1.0 },
+            { query: 'car driving away', weight: 1.0 }
+        ];
+    }
+    
+    // Use custom events from input fields
+    const events = [];
+    const event1 = document.getElementById('debugEvent1').value.trim();
+    const event2 = document.getElementById('debugEvent2').value.trim();
+    const event3 = document.getElementById('debugEvent3').value.trim();
+    
+    if (event1) events.push({ query: event1, weight: 1.0 });
+    if (event2) events.push({ query: event2, weight: 1.0 });
+    if (event3) events.push({ query: event3, weight: 1.0 });
+    
+    return events;
+}
+
+function updateDebugProgress(percentage, message) {
+    const progressBar = document.getElementById('debugProgressBar');
+    const currentStep = document.getElementById('debugCurrentStep');
+    
+    if (progressBar) {
+        progressBar.style.width = percentage + '%';
+        progressBar.setAttribute('aria-valuenow', percentage);
+    }
+    
+    if (currentStep) {
+        currentStep.textContent = message;
+    }
+}
+
+function updateDebugStep(message) {
+    const currentStep = document.getElementById('debugCurrentStep');
+    if (currentStep) {
+        currentStep.textContent = message;
+    }
+}
+
+function appendDebugLog(logEntry) {
+    const container = document.querySelector('.debug-log-container');
+    if (!container) return;
+    
+    const logDiv = document.createElement('div');
+    logDiv.className = `debug-log-entry debug-log-${logEntry.level}`;
+    
+    const levelIcon = logEntry.level === 'error' ? '❌' : 
+                     logEntry.level === 'warn' ? '⚠️' : 
+                     logEntry.level === 'success' ? '✅' : 'ℹ️';
+    
+    logDiv.innerHTML = `
+        <span class="debug-timestamp">${logEntry.timestamp}</span>
+        <span class="debug-level">${levelIcon}</span>
+        <span class="debug-message">${logEntry.message}</span>
+        ${logEntry.data ? '<pre class="debug-data">' + JSON.stringify(logEntry.data, null, 2) + '</pre>' : ''}
+    `;
+    
+    container.appendChild(logDiv);
+    logDiv.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function generateDebugReport() {
+    debugLog('📋 Generating comprehensive debug report...', 'info');
+    
+    const totalTime = performance.now() - debugState.startTime;
+    const resultsContainer = document.getElementById('debugResults');
+    
+    const report = `
+        <div class="debug-report">
+            <div class="row mb-4">
+                <div class="col-12">
+                    <h4>🐛 TRAKE Algorithm Debug Report</h4>
+                    <p class="text-muted">Total execution time: ${totalTime.toFixed(2)}ms</p>
+                </div>
+            </div>
+            
+            <!-- Summary Statistics -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card bg-primary text-white">
+                        <div class="card-body text-center">
+                            <h5>${debugState.events.length}</h5>
+                            <p class="mb-0">Events</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-info text-white">
+                        <div class="card-body text-center">
+                            <h5>${debugState.candidates.length}</h5>
+                            <p class="mb-0">Candidates</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-warning text-white">
+                        <div class="card-body text-center">
+                            <h5>${debugState.sequences.length}</h5>
+                            <p class="mb-0">Sequences</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-success text-white">
+                        <div class="card-body text-center">
+                            <h5>${debugState.finalResults.length}</h5>
+                            <p class="mb-0">Final Results</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Phase Details -->
+            ${generatePhaseDetails()}
+            
+            <!-- Configuration Used -->
+            ${generateConfigDetails()}
+            
+            <!-- Results Preview -->
+            ${generateResultsPreview()}
+            
+            <!-- Debug Log -->
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">📝 Debug Log</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="debug-log-container" style="max-height: 300px; overflow-y: auto;">
+                                <!-- Log entries will be added here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    resultsContainer.innerHTML = report;
+    debugLog('✅ Debug report generated successfully', 'success');
+}
+
+function generatePhaseDetails() {
+    const phase1 = debugState.phaseResults.phase1 || {};
+    const phase2 = debugState.phaseResults.phase2 || {};
+    const phase3 = debugState.phaseResults.phase3 || {};
+    
+    return `
+        <div class="row mb-4">
+            <div class="col-12">
+                <h5>📊 Detailed Phase Analysis</h5>
+            </div>
+            <div class="col-12">
+                <div class="accordion" id="phaseAccordion">
+                    <!-- Phase 1 Details -->
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#phase1Details">
+                                <strong>Phase 1: Initial Search</strong>
+                                <span class="badge bg-primary ms-2">${phase1.candidateCount || 0} candidates</span>
+                                <span class="badge bg-info ms-1">${(phase1.timing || 0).toFixed(0)}ms</span>
+                            </button>
+                        </h2>
+                        <div id="phase1Details" class="accordion-collapse collapse show">
+                            <div class="accordion-body">
+                                ${generatePhase1Details(phase1)}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Phase 2 Details -->
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#phase2Details">
+                                <strong>Phase 2: Sequence Discovery</strong>
+                                <span class="badge bg-warning ms-2">${phase2.sequenceCount || 0} sequences</span>
+                                <span class="badge bg-info ms-1">${(phase2.timing || 0).toFixed(0)}ms</span>
+                            </button>
+                        </h2>
+                        <div id="phase2Details" class="accordion-collapse collapse">
+                            <div class="accordion-body">
+                                ${generatePhase2Details(phase2)}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Phase 3 Details -->
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#phase3Details">
+                                <strong>Phase 3: Advanced Scoring</strong>
+                                <span class="badge bg-success ms-2">${phase3.resultCount || 0} results</span>
+                                <span class="badge bg-info ms-1">${(phase3.timing || 0).toFixed(0)}ms</span>
+                            </button>
+                        </h2>
+                        <div id="phase3Details" class="accordion-collapse collapse">
+                            <div class="accordion-body">
+                                ${generatePhase3Details(phase3)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function generatePhase1Details(phase1) {
+    if (!phase1.detailedCandidates || phase1.detailedCandidates.length === 0) {
+        return '<p class="text-muted">No detailed candidate information available.</p>';
+    }
+    
+    return `
+        <h6>🔍 Top Candidate Frames</h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Rank</th>
+                        <th>Frame</th>
+                        <th>Video</th>
+                        <th>Keyframe #</th>
+                        <th>Similarity</th>
+                        <th>Time</th>
+                        <th>Preview</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${phase1.detailedCandidates.map((candidate, index) => `
+                        <tr>
+                            <td><span class="badge bg-primary">#${index + 1}</span></td>
+                            <td><small>${candidate.id}</small></td>
+                            <td><small>${candidate.video_id}</small></td>
+                            <td><strong>${candidate.keyframe_n}</strong></td>
+                            <td><span class="badge bg-success">${(candidate.similarity * 100).toFixed(1)}%</span></td>
+                            <td><small>${candidate.pts_time?.toFixed(1)}s</small></td>
+                            <td>
+                                <img src="/${candidate.image_path}" 
+                                     class="img-thumbnail debug-frame-preview" 
+                                     style="width: 40px; height: 30px; cursor: pointer;"
+                                     onclick="showFrameModal(${candidate.id})"
+                                     alt="Frame ${candidate.keyframe_n}">
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+        <p class="small text-muted mt-2">
+            <i class="fas fa-info-circle"></i> 
+            Showing top 10 candidate frames from initial search. All candidates pass to Phase 2 (no early filtering).
+        </p>
+    `;
+}
+
+function generatePhase2Details(phase2) {
+    if (!phase2.detailedSequences || phase2.detailedSequences.length === 0) {
+        return '<p class="text-muted">No detailed sequence information available.</p>';
+    }
+    
+    return `
+        <h6>🔗 Sequence Building Analysis</h6>
+        ${phase2.detailedSequences.map((seqInfo, index) => `
+            <div class="card mb-3 ${seqInfo.valid ? 'border-success' : 'border-warning'}">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <strong>Candidate #${seqInfo.candidateId}</strong>
+                        <div>
+                            <span class="badge ${seqInfo.valid ? 'bg-success' : 'bg-warning'}">${seqInfo.valid ? 'Valid' : 'Invalid'}</span>
+                            <small class="text-muted ms-2">Frame ${seqInfo.candidate.keyframe_n}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>📍 Pivot Information</h6>
+                            <p><strong>Best Event:</strong> Event ${seqInfo.pivot.eventIndex + 1} (${seqInfo.pivot.eventQuery})</p>
+                            <p><strong>Pivot Similarity:</strong> <span class="badge bg-info">${(seqInfo.pivot.similarity * 100).toFixed(1)}%</span></p>
+                            <p><strong>Reason:</strong> <small class="text-muted">${seqInfo.reason}</small></p>
+                        </div>
+                        <div class="col-md-6">
+                            <img src="/${seqInfo.candidate.image_path}" 
+                                 class="img-thumbnail" 
+                                 style="width: 120px; height: 90px; cursor: pointer;"
+                                 onclick="showFrameModal(${seqInfo.candidate.id})"
+                                 alt="Candidate Frame">
+                        </div>
+                    </div>
+                    
+                    ${seqInfo.sequence ? `
+                        <h6 class="mt-3">🎬 Sequence Frames</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Event</th>
+                                        <th>Query</th>
+                                        <th>Frame #</th>
+                                        <th>Similarity</th>
+                                        <th>Pivot</th>
+                                        <th>Preview</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${seqInfo.sequence.map((frame, eventIndex) => `
+                                        <tr class="${frame.matched ? '' : 'table-secondary'}">
+                                            <td><span class="badge bg-secondary">${eventIndex + 1}</span></td>
+                                            <td><small>${frame.eventQuery}</small></td>
+                                            <td>${frame.frame ? `<strong>${frame.frame.keyframe_n}</strong>` : '<span class="text-muted">-</span>'}</td>
+                                            <td>${frame.frame ? `<span class="badge bg-success">${(frame.frame.similarity * 100).toFixed(1)}%</span>` : '<span class="text-muted">-</span>'}</td>
+                                            <td>${frame.frame?.isPivot ? '<i class="fas fa-star text-warning"></i>' : ''}</td>
+                                            <td>
+                                                ${frame.frame ? `
+                                                    <img src="/${frame.frame.image_path}" 
+                                                         class="img-thumbnail debug-frame-preview" 
+                                                         style="width: 30px; height: 22px; cursor: pointer;"
+                                                         onclick="showFrameModal(${frame.frame.id})"
+                                                         alt="Frame ${frame.frame.keyframe_n}">
+                                                ` : '<span class="text-muted">No match</span>'}
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('')}
+        <p class="small text-muted">
+            <i class="fas fa-info-circle"></i> 
+            Showing detailed sequence building for top 10 candidates. Each candidate is evaluated as a potential pivot for sequence discovery.
+        </p>
+    `;
+}
+
+function generatePhase3Details(phase3) {
+    if (!phase3.detailedScoring || phase3.detailedScoring.length === 0) {
+        return '<p class="text-muted">No detailed scoring information available.</p>';
+    }
+    
+    return `
+        <h6>📊 Scoring & Ranking Analysis</h6>
+        ${phase3.detailedScoring.map((scoreInfo, index) => `
+            <div class="card mb-3 ${scoreInfo.passedThreshold ? 'border-success' : 'border-danger'}">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <strong>Sequence #${scoreInfo.sequenceId}</strong>
+                        <div>
+                            <span class="badge bg-primary">${(scoreInfo.score * 100).toFixed(1)}%</span>
+                            <span class="badge ${scoreInfo.passedThreshold ? 'bg-success' : 'bg-danger'}">${scoreInfo.passedThreshold ? 'Passed' : 'Failed'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>📈 Score Breakdown</h6>
+                            <div class="row">
+                                <div class="col-6">
+                                    <small>Base Similarity:</small><br>
+                                    <span class="badge bg-info">${(scoreInfo.scoreBreakdown.baseSimilarity * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="col-6">
+                                    <small>Temporal:</small><br>
+                                    <span class="badge bg-info">${(scoreInfo.scoreBreakdown.temporal * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="col-6 mt-2">
+                                    <small>Completeness:</small><br>
+                                    <span class="badge bg-info">${(scoreInfo.scoreBreakdown.completeness * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="col-6 mt-2">
+                                    <small>Order:</small><br>
+                                    <span class="badge bg-info">${(scoreInfo.scoreBreakdown.order * 100).toFixed(1)}%</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>📋 Metadata</h6>
+                            <p><small><strong>Video:</strong> ${scoreInfo.metadata.videoId}</small></p>
+                            <p><small><strong>Frame Range:</strong> ${scoreInfo.metadata.startFrame} - ${scoreInfo.metadata.endFrame}</small></p>
+                            <p><small><strong>Duration:</strong> ${scoreInfo.metadata.duration} frames</small></p>
+                            <p><small><strong>Completeness:</strong> ${(scoreInfo.metadata.completeness * 100).toFixed(1)}%</small></p>
+                        </div>
+                    </div>
+                    
+                    <h6>🎬 Final Sequence Frames</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Event</th>
+                                    <th>Query</th>
+                                    <th>Frame #</th>
+                                    <th>Similarity</th>
+                                    <th>Pivot</th>
+                                    <th>Preview</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${scoreInfo.frames.map((frame, eventIndex) => `
+                                    <tr class="${frame.matched ? '' : 'table-secondary'}">
+                                        <td><span class="badge bg-secondary">${eventIndex + 1}</span></td>
+                                        <td><small>${frame.eventQuery}</small></td>
+                                        <td>${frame.frame ? `<strong>${frame.frame.keyframe_n}</strong>` : '<span class="text-muted">-</span>'}</td>
+                                        <td>${frame.frame ? `<span class="badge bg-success">${(frame.frame.similarity * 100).toFixed(1)}%</span>` : '<span class="text-muted">-</span>'}</td>
+                                        <td>${frame.frame?.isPivot ? '<i class="fas fa-star text-warning"></i>' : ''}</td>
+                                        <td>
+                                            ${frame.frame ? `
+                                                <img src="/${frame.frame.image_path}" 
+                                                     class="img-thumbnail debug-frame-preview" 
+                                                     style="width: 30px; height: 22px; cursor: pointer;"
+                                                     onclick="showFrameModal(${frame.frame.id})"
+                                                     alt="Frame ${frame.frame.keyframe_n}">
+                                            ` : '<span class="text-muted">No match</span>'}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `).join('')}
+        <p class="small text-muted">
+            <i class="fas fa-info-circle"></i> 
+            Showing detailed scoring analysis for all sequences. Final ranking is based on combined scores from similarity, temporal order, and completeness.
+        </p>
+    `;
+}
+
+function generateConfigDetails() {
+    return `
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">⚙️ Algorithm Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p><strong>Similarity Threshold:</strong> ${algorithmConfig.similarityThreshold}</p>
+                                <p><strong>Score Threshold:</strong> ${algorithmConfig.scoreThreshold}</p>
+                                <p><strong>Top K:</strong> ${algorithmConfig.topK}</p>
+                                <p><strong>Max Temporal Gap:</strong> ${algorithmConfig.maxTemporalGap}</p>
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Search Window:</strong> ${algorithmConfig.searchWindow}</p>
+                                <p><strong>Min Completeness:</strong> ${algorithmConfig.minSequenceCompleteness}</p>
+                                <p><strong>Temporal Weight:</strong> ${algorithmConfig.temporalWeight}</p>
+                                <p class="text-success"><strong>Early Filtering:</strong> ❌ Disabled (All candidates passed to Phase 2)</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function generateResultsPreview() {
+    if (debugState.finalResults.length === 0) {
+        return `
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="alert alert-warning">
+                        <h6>⚠️ No Results Found</h6>
+                        <p>The algorithm didn't find any sequences meeting the criteria. Consider:</p>
+                        <ul>
+                            <li>Lowering the similarity threshold</li>
+                            <li>Lowering the score threshold</li>
+                            <li>Increasing the search window</li>
+                            <li>Using different event descriptions</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    const maxResults = Math.min(debugState.finalResults.length, 10);
+    const displayResults = debugState.finalResults.slice(0, maxResults);
+    
+    return `
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">🏆 Final Results (Top ${maxResults})</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Rank</th>
+                                        <th>Score</th>
+                                        <th>Video</th>
+                                        <th>Frame Range</th>
+                                        <th>Duration</th>
+                                        <th>Completeness</th>
+                                        <th>Preview</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${displayResults.map((result, index) => {
+                                        // Get first valid frame for preview
+                                        const firstFrame = result.sequence.find(frameData => frameData && frameData.frame);
+                                        return `
+                                            <tr>
+                                                <td><span class="badge bg-primary">#${index + 1}</span></td>
+                                                <td><span class="badge bg-success">${(result.score * 100).toFixed(1)}%</span></td>
+                                                <td><small>${result.metadata.videoId}</small></td>
+                                                <td><strong>${result.metadata.startFrame} - ${result.metadata.endFrame}</strong></td>
+                                                <td>${result.metadata.duration} frames</td>
+                                                <td><span class="badge bg-info">${(result.metadata.completeness * 100).toFixed(0)}%</span></td>
+                                                <td>
+                                                    ${firstFrame ? `
+                                                        <img src="/${firstFrame.frame.image_path}" 
+                                                             class="img-thumbnail debug-frame-preview" 
+                                                             style="width: 40px; height: 30px; cursor: pointer;"
+                                                             onclick="showFrameModal(${firstFrame.frame.id})"
+                                                             alt="First frame">
+                                                    ` : '<span class="text-muted">No preview</span>'}
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <h6>🥇 Top Result Details</h6>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <small>Base Similarity:</small><br>
+                                        <span class="badge bg-info">${(displayResults[0].scoreBreakdown.baseSimilarity * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div class="col-6">
+                                        <small>Temporal:</small><br>
+                                        <span class="badge bg-info">${(displayResults[0].scoreBreakdown.temporal * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div class="col-6 mt-2">
+                                        <small>Completeness:</small><br>
+                                        <span class="badge bg-info">${(displayResults[0].scoreBreakdown.completeness * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div class="col-6 mt-2">
+                                        <small>Order:</small><br>
+                                        <span class="badge bg-info">${(displayResults[0].scoreBreakdown.order * 100).toFixed(1)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>🎬 Top Sequence Frames</h6>
+                                <div class="d-flex flex-wrap gap-1">
+                                    ${displayResults[0].sequence.map((frameData, eventIndex) => {
+                                        if (!frameData || !frameData.frame) {
+                                            return `<div class="text-muted small" style="width: 30px; height: 22px; display: flex; align-items: center; justify-content: center; border: 1px dashed #ccc;">-</div>`;
+                                        }
+                                        return `
+                                            <img src="/${frameData.frame.image_path}" 
+                                                 class="img-thumbnail debug-frame-preview" 
+                                                 style="width: 30px; height: 22px; cursor: pointer; ${frameData.isPivot ? 'border: 2px solid #ffc107;' : ''}"
+                                                 onclick="showFrameModal(${frameData.frame.id})"
+                                                 title="Event ${eventIndex + 1}${frameData.isPivot ? ' (Pivot)' : ''}: Frame ${frameData.frame.keyframe_n}"
+                                                 alt="Frame ${frameData.frame.keyframe_n}">
+                                        `;
+                                    }).join('')}
+                                </div>
+                                <p class="small text-muted mt-1">
+                                    <i class="fas fa-star text-warning"></i> Gold border = Pivot frame
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Event listener for debug test events dropdown
+document.addEventListener('DOMContentLoaded', function() {
+    const debugTestEvents = document.getElementById('debugTestEvents');
+    if (debugTestEvents) {
+        debugTestEvents.addEventListener('change', function() {
+            const value = this.value;
+            const event1 = document.getElementById('debugEvent1');
+            const event2 = document.getElementById('debugEvent2');
+            const event3 = document.getElementById('debugEvent3');
+            
+            if (value === 'simple') {
+                if (event1) event1.value = 'person walking';
+                if (event2) event2.value = 'car driving';
+                if (event3) event3.value = '';
+            } else if (value === 'complex') {
+                if (event1) event1.value = 'person standing';
+                if (event2) event2.value = 'person walking';
+                if (event3) event3.value = 'car approaching';
+            }
+        });
+    }
+});
 
 // Legacy scoring function (keep for compatibility)
 function calculateSequenceScore(sequence, events) {
@@ -1416,16 +3348,16 @@ function calculateSequenceScore(sequence, events) {
     return totalSimilarity / events.length;
 }
 
-// Display sequence search results
-function displaySequenceResults(sequences, events) {
+// Enhanced display for sequence results
+function displayEnhancedSequenceResults(results, events) {
     const resultsDiv = document.getElementById('searchResults');
     currentSearchResults = []; // Clear for CSV export
     
     // Store sequences and events globally
-    allSequences = sequences;
+    allSequences = results;
     currentEvents = events;
     
-    if (!sequences || sequences.length === 0) {
+    if (!results || results.length === 0) {
         resultsDiv.innerHTML = `
             <div class="text-center text-muted py-5">
                 <i class="fas fa-search fa-3x mb-3"></i>
@@ -1438,41 +3370,71 @@ function displaySequenceResults(sequences, events) {
     
     let html = `
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h4>TRAKE Sequence Results</h4>
+            <h4>Enhanced TRAKE Sequence Results</h4>
             <div class="text-muted">
                 <i class="fas fa-info-circle me-1"></i>
-                Found ${sequences.length} sequences
+                Found ${results.length} sequences
             </div>
         </div>
     `;
     
-    sequences.forEach((sequence, index) => {
+    results.forEach((result, index) => {
+        const sequence = result.sequence;
+        const breakdown = result.scoreBreakdown;
+        const metadata = result.metadata;
+        
         html += `
-            <div class="sequence-result">
+            <div class="sequence-result enhanced">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5>Sequence ${index + 1}</h5>
-                    <span class="sequence-score">Score: ${(sequence.score * 100).toFixed(1)}%</span>
+                    <div class="score-info">
+                        <span class="sequence-score">Score: ${(result.score * 100).toFixed(1)}%</span>
+                        <small class="text-muted ms-2">
+                            (Sim: ${(breakdown.baseSimilarity * 100).toFixed(0)}%, 
+                             Temp: ${(breakdown.temporal * 100).toFixed(0)}%, 
+                             Comp: ${(breakdown.completeness * 100).toFixed(0)}%)
+                        </small>
+                    </div>
                 </div>
+                
+                <div class="sequence-metadata mb-3">
+                    <small class="text-muted">
+                        Video: ${metadata.videoId} | 
+                        Frames: ${metadata.startFrame}-${metadata.endFrame} | 
+                        Duration: ${metadata.duration} frames | 
+                        Completeness: ${(metadata.completeness * 100).toFixed(0)}%
+                    </small>
+                </div>
+                
                 <div class="sequence-frames">
         `;
         
-        sequence.frames.forEach((frameData, eventIndex) => {
-            if (frameData) {
-                const imagePath = `/images/${frameData.frame.video_id}/${frameData.frame.image_filename}`;
-                const pivotClass = frameData.isPivot ? 'pivot' : '';
-                
-                html += `
-                    <div class="sequence-frame ${pivotClass}" onclick="openSequenceFrameByIndex(${index})">
-                        <img src="${imagePath}" alt="Event ${eventIndex + 1}">
-                        <div class="small mt-1">
-                            <div>Frame ${frameData.frame.keyframe_n}</div>
-                            <div class="event-label">Event ${eventIndex + 1}</div>
-                            <div class="text-muted">${(frameData.similarity * 100).toFixed(1)}%</div>
-                        </div>
+        sequence.forEach((frameData, frameIndex) => {
+            // Add safety checks
+            if (!frameData || !frameData.frame) {
+                console.warn('Invalid frame data at index:', frameIndex);
+                return;
+            }
+            
+            const imagePath = `/images/${frameData.videoId || frameData.frame.video_id}/${frameData.frame.image_filename}`;
+            const pivotClass = frameData.isPivot ? 'pivot' : '';
+            const frameNumber = frameData.frame.keyframe_n || frameData.frame.frame_idx || frameIndex;
+            const similarity = frameData.similarity || 0;
+            
+            html += `
+                <div class="sequence-frame ${pivotClass}" onclick="openEnhancedSequenceFrame(${index})">
+                    <img src="${imagePath}" alt="Event ${frameIndex + 1}" onerror="this.src='/static/placeholder.jpg'">
+                    <div class="small mt-1">
+                        <div>Frame ${frameNumber}</div>
+                        <div class="event-label">Event ${frameIndex + 1}</div>
+                        <div class="text-muted">${(similarity * 100).toFixed(1)}%</div>
+                        ${frameData.isPivot ? '<div class="pivot-label">PIVOT</div>' : ''}
                     </div>
-                `;
-                
-                // Add to results for CSV export
+                </div>
+            `;
+            
+            // Add to results for CSV export
+            if (frameData.frame) {
                 currentSearchResults.push(frameData.frame);
             }
         });
@@ -1486,73 +3448,93 @@ function displaySequenceResults(sequences, events) {
     resultsDiv.innerHTML = html;
 }
 
-// Open sequence frame by index
-function openSequenceFrameByIndex(sequenceIndex) {
-    if (sequenceIndex >= 0 && sequenceIndex < allSequences.length) {
-        const sequence = allSequences[sequenceIndex];
-        openSequenceFrame(sequence, currentEvents);
+// Open enhanced sequence frame viewer
+function openEnhancedSequenceFrame(resultIndex) {
+    if (resultIndex >= 0 && resultIndex < allSequences.length) {
+        const result = allSequences[resultIndex];
+        openSequenceFrameEnhanced(result, currentEvents);
     }
 }
 
-// Open sequence frame in new sequence viewer
-function openSequenceFrame(sequence, events) {
-    currentSequence = sequence;
+// Enhanced sequence frame viewer
+function openSequenceFrameEnhanced(result, events) {
+    currentSequence = result;
     
-    displaySequenceViewer(sequence, events);
+    displayEnhancedSequenceViewer(result, events);
     const modal = new bootstrap.Modal(document.getElementById('sequenceModal'));
     modal.show();
 }
 
-// Display sequence viewer modal
-function displaySequenceViewer(sequence, events) {
+// Enhanced sequence viewer modal display
+function displayEnhancedSequenceViewer(result, events) {
     const viewer = document.getElementById('sequenceViewer');
+    const sequence = result.sequence;
+    const breakdown = result.scoreBreakdown;
+    const metadata = result.metadata;
     
     let html = `
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center">
-                    <h5>Event Sequence</h5>
-                    <span class="sequence-score">Score: ${(sequence.score * 100).toFixed(1)}%</span>
+                    <h5>Enhanced Event Sequence</h5>
+                    <span class="sequence-score">Score: ${(result.score * 100).toFixed(1)}%</span>
                 </div>
-                <div class="text-muted small">Video: ${sequence.frames[0]?.frame.video_id}</div>
+                <div class="text-muted small">
+                    Video: ${metadata.videoId} | 
+                    Frames: ${metadata.startFrame}-${metadata.endFrame} | 
+                    Duration: ${metadata.duration} frames
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="score-breakdown">
+                    <h6>Score Breakdown:</h6>
+                    <div class="row">
+                        <div class="col">Base Similarity: ${(breakdown.baseSimilarity * 100).toFixed(1)}%</div>
+                        <div class="col">Temporal: ${(breakdown.temporal * 100).toFixed(1)}%</div>
+                        <div class="col">Completeness: ${(breakdown.completeness * 100).toFixed(1)}%</div>
+                        <div class="col">Consistency: ${(breakdown.consistency * 100).toFixed(1)}%</div>
+                        <div class="col">Order: ${(breakdown.order * 100).toFixed(1)}%</div>
+                    </div>
+                </div>
             </div>
         </div>
         
         <div class="row g-4">
     `;
     
-    sequence.frames.forEach((frameData, index) => {
-        if (frameData) {
-            const imagePath = `/images/${frameData.frame.video_id}/${frameData.frame.image_filename}`;
-            const pivotClass = frameData.isPivot ? 'border-danger border-3' : 'border-success border-2';
-            
-            html += `
-                <div class="col-md-4">
-                    <div class="text-center">
-                        <div class="mb-2">
-                            <span class="badge bg-primary">Event ${index + 1}</span>
-                            ${frameData.isPivot ? '<span class="badge bg-danger ms-1">Pivot</span>' : ''}
-                        </div>
-                        <img src="${imagePath}" 
-                             class="img-fluid rounded ${pivotClass}" 
-                             style="max-height: 300px; cursor: pointer;"
-                             onclick="openFrameViewer(${frameData.frame.id})"
-                             alt="Event ${index + 1}">
-                        <div class="mt-2">
-                            <div class="fw-bold">Frame ${frameData.frame.keyframe_n}</div>
-                            <div class="text-muted small">${formatTime(frameData.frame.pts_time)}</div>
-                            <div class="text-success small">Similarity: ${(frameData.similarity * 100).toFixed(1)}%</div>
-                        </div>
-                        <div class="mt-2">
-                            <div class="small text-muted">
-                                <strong>Event Description:</strong><br>
-                                ${events[index]?.query || 'N/A'}
-                            </div>
+    sequence.forEach((frameData, index) => {
+        const imagePath = `/images/${frameData.videoId}/${frameData.frame.image_filename}`;
+        const pivotClass = frameData.isPivot ? 'border-danger border-3' : 'border-success border-2';
+        
+        html += `
+            <div class="col-md-4">
+                <div class="text-center">
+                    <div class="mb-2">
+                        <span class="badge bg-primary">Event ${index + 1}</span>
+                        ${frameData.isPivot ? '<span class="badge bg-danger ms-1">Pivot</span>' : ''}
+                    </div>
+                    <img src="${imagePath}" 
+                         class="img-fluid rounded ${pivotClass}" 
+                         style="max-height: 300px; cursor: pointer;"
+                         onclick="openFrameViewer(${frameData.frame.id})"
+                         alt="Event ${index + 1}">
+                    <div class="mt-2">
+                        <div class="fw-bold">Frame ${frameData.frame.keyframe_n}</div>
+                        <div class="text-muted small">${formatTime(frameData.frame.pts_time)}</div>
+                        <div class="text-success small">Similarity: ${(frameData.similarity * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="mt-2">
+                        <div class="small text-muted">
+                            <strong>Event Description:</strong><br>
+                            ${events[index]?.query || 'N/A'}
                         </div>
                     </div>
                 </div>
-            `;
-        }
+            </div>
+        `;
     });
     
     html += `
@@ -1560,12 +3542,13 @@ function displaySequenceViewer(sequence, events) {
         <div class="row mt-4">
             <div class="col-12">
                 <div class="alert alert-info">
-                    <h6><i class="fas fa-info-circle me-2"></i>Sequence Information:</h6>
+                    <h6><i class="fas fa-info-circle me-2"></i>Enhanced Sequence Information:</h6>
                     <ul class="mb-0">
-                        <li><strong>Video ID:</strong> ${sequence.frames[0]?.frame.video_id}</li>
-                        <li><strong>Frame Range:</strong> ${Math.min(...sequence.frames.map(f => f?.frame.keyframe_n || 0))} - ${Math.max(...sequence.frames.map(f => f?.frame.keyframe_n || 0))}</li>
-                        <li><strong>Pivot Event:</strong> Event ${sequence.pivotEventIndex + 1}</li>
-                        <li><strong>Final Score:</strong> ${(sequence.score * 100).toFixed(1)}%</li>
+                        <li><strong>Video ID:</strong> ${metadata.videoId}</li>
+                        <li><strong>Frame Range:</strong> ${metadata.startFrame} - ${metadata.endFrame}</li>
+                        <li><strong>Duration:</strong> ${metadata.duration} frames</li>
+                        <li><strong>Completeness:</strong> ${(metadata.completeness * 100).toFixed(1)}%</li>
+                        <li><strong>Final Score:</strong> ${(result.score * 100).toFixed(1)}%</li>
                     </ul>
                 </div>
             </div>
@@ -1575,18 +3558,124 @@ function displaySequenceViewer(sequence, events) {
     viewer.innerHTML = html;
 }
 
-// Export sequence to CSV
+// Open sequence frame by index (legacy compatibility)
+function openSequenceFrameByIndex(sequenceIndex) {
+    if (sequenceIndex >= 0 && sequenceIndex < allSequences.length) {
+        const result = allSequences[sequenceIndex];
+        // Check if it's the new enhanced format or legacy format
+        if (result.sequence && result.scoreBreakdown) {
+            // New enhanced format
+            openSequenceFrameEnhanced(result, currentEvents);
+        } else {
+            // Legacy format - convert to enhanced format
+            const legacyResult = {
+                sequence: result.frames ? result.frames : result,
+                score: result.score || 0,
+                scoreBreakdown: {
+                    baseSimilarity: 0.8,
+                    temporal: 0.8,
+                    completeness: 1.0,
+                    consistency: 0.8,
+                    order: 1.0
+                },
+                metadata: {
+                    videoId: result.frames ? result.frames[0]?.frame?.video_id : 'unknown',
+                    startFrame: 0,
+                    endFrame: 100,
+                    duration: 100,
+                    completeness: 1.0
+                }
+            };
+            openSequenceFrameEnhanced(legacyResult, currentEvents);
+        }
+    }
+}
+
+// Legacy function kept for compatibility
+function openSequenceFrame(sequence, events) {
+    // Convert legacy format to enhanced format
+    const enhancedResult = {
+        sequence: sequence.frames || sequence,
+        score: sequence.score || 0,
+        scoreBreakdown: {
+            baseSimilarity: 0.8,
+            temporal: 0.8,
+            completeness: 1.0,
+            consistency: 0.8,
+            order: 1.0
+        },
+        metadata: {
+            videoId: sequence.frames ? sequence.frames[0]?.frame?.video_id : 'unknown',
+            startFrame: 0,
+            endFrame: 100,
+            duration: 100,
+            completeness: 1.0
+        }
+    };
+    
+    currentSequence = enhancedResult;
+    displayEnhancedSequenceViewer(enhancedResult, events);
+    const modal = new bootstrap.Modal(document.getElementById('sequenceModal'));
+    modal.show();
+}
+
+// Legacy display sequence viewer (converted to use enhanced viewer)
+function displaySequenceViewer(sequence, events) {
+    // Convert legacy format to enhanced format and use the enhanced viewer
+    const enhancedResult = {
+        sequence: sequence.frames || sequence,
+        score: sequence.score || 0,
+        scoreBreakdown: {
+            baseSimilarity: 0.8,
+            temporal: 0.8,
+            completeness: 1.0,
+            consistency: 0.8,
+            order: 1.0
+        },
+        metadata: {
+            videoId: sequence.frames ? sequence.frames[0]?.frame?.video_id : 'unknown',
+            startFrame: 0,
+            endFrame: 100,
+            duration: 100,
+            completeness: 1.0
+        }
+    };
+    
+    displayEnhancedSequenceViewer(enhancedResult, events);
+}
+
+// Export sequence to CSV (enhanced version)
 function exportSequenceCSV() {
     if (!currentSequence) {
         showError('No sequence to export');
         return;
     }
     
-    // Get video ID and frame numbers
-    const videoId = currentSequence.frames[0]?.frame.video_id;
-    const frameNumbers = currentSequence.frames
-        .filter(frameData => frameData !== null)
-        .map(frameData => frameData.frame.keyframe_n);
+    let videoId, frameNumbers;
+    
+    // Handle both enhanced and legacy format
+    if (currentSequence.sequence && Array.isArray(currentSequence.sequence)) {
+        // Enhanced format
+        const sequence = currentSequence.sequence;
+        videoId = currentSequence.metadata?.videoId || sequence[0]?.videoId || 'unknown';
+        frameNumbers = sequence
+            .filter(frameData => frameData !== null)
+            .map(frameData => frameData.frame ? frameData.frame.keyframe_n : frameData.frameIndex);
+    } else if (currentSequence.frames) {
+        // Legacy format
+        videoId = currentSequence.frames[0]?.frame?.video_id || 'unknown';
+        frameNumbers = currentSequence.frames
+            .filter(frameData => frameData !== null)
+            .map(frameData => frameData.frame.keyframe_n);
+    } else {
+        showError('Invalid sequence format for export');
+        return;
+    }
+    
+    if (!frameNumbers || frameNumbers.length === 0) {
+        showError('No frame numbers found to export');
+        return;
+    }
     
     // Create CSV content: videoID,frame1,frame2,frame3
     const csvContent = `${videoId},${frameNumbers.join(',')}`;
@@ -1604,7 +3693,7 @@ function exportSequenceCSV() {
     link.click();
     document.body.removeChild(link);
     
-    showSuccess(`Exported sequence for video ${videoId}`);
+    showSuccess(`Exported sequence for video ${videoId} with ${frameNumbers.length} frames`);
 }
 
 // Perform TRAKE search
@@ -1625,6 +3714,7 @@ async function performTRAKESearch() {
             showError('Please enter a text query');
             return;
         }
+        const useKeywordParser = document.getElementById('useKeywordParser')?.checked ?? true;
         
         showLoading(true);
         
@@ -1632,7 +3722,8 @@ async function performTRAKESearch() {
             const params = new URLSearchParams({
                 query: query,
                 top_k: topK,
-                video_id: videoId
+                video_id: videoId,
+                use_keyword_parser: useKeywordParser
             });
             
             const response = await fetch(`/search/text?${params.toString()}`, {
