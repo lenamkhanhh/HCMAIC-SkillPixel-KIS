@@ -16,6 +16,7 @@ Checks (mission-mandated minimum):
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -130,6 +131,25 @@ def validate_dataset(root: Path, check_images: bool = True) -> ValidationReport:
                     "negative-timestamp",
                     f"{row.source}: pts_time={row.pts_time} is negative for "
                     f"{frame_id}. Timestamps must be >= 0 seconds.",
+                    video_id=vid,
+                    frame_id=frame_id,
+                )
+            )
+        if not math.isfinite(row.pts_time) or not math.isfinite(row.fps):
+            errors.append(
+                _err(
+                    "non-finite-timing",
+                    f"{row.source}: pts_time and fps must be finite numbers for "
+                    f"{frame_id}; got pts_time={row.pts_time}, fps={row.fps}.",
+                    video_id=vid,
+                    frame_id=frame_id,
+                )
+            )
+        elif row.fps <= 0:
+            errors.append(
+                _err(
+                    "invalid-fps",
+                    f"{row.source}: fps={row.fps} must be > 0 for {frame_id}.",
                     video_id=vid,
                     frame_id=frame_id,
                 )

@@ -123,7 +123,11 @@ async function openDetail(frameId) {
       title: f.metadata.title || "—",
     };
     for (const [k, v] of Object.entries(rows)) {
-      meta.insertAdjacentHTML("beforeend", `<dt>${k}</dt><dd>${v}</dd>`);
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = k;
+      description.textContent = String(v);
+      meta.append(term, description);
     }
     const strip = $("neighbors");
     strip.innerHTML = "";

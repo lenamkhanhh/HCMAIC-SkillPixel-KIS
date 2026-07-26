@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from hcmaic.contracts.models import CanonicalSubmission, SearchRequest, SearchResult
 from hcmaic.retrieval.service import (
@@ -37,6 +37,13 @@ class ApiSearchRequest(BaseModel):
     text: str = Field(min_length=1)
     filters: dict = Field(default_factory=dict)
     top_k: int = Field(default=10, ge=1, le=500)
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
 
 
 class SearchResponse(BaseModel):
@@ -86,14 +93,18 @@ def create_app(
 
     @app.get("/system/info")
     def system_info() -> dict:
+        public_manifest = {
+            key: value
+            for key, value in service.artifacts.index_manifest.items()
+            if key != "dataset_root"
+        }
         return {
-            "index_manifest": service.artifacts.index_manifest,
+            "index_manifest": public_manifest,
             "dataset_manifest_hash": service.artifacts.dataset_manifest.get(
                 "dataset_hash"
             ),
             "n_frames": len(service.artifacts.catalog),
             "video_ids": service.video_ids(),
-            "artifacts_dir": str(service.artifacts.artifacts_dir),
         }
 
     @app.post("/search", response_model=SearchResponse)
@@ -155,8 +166,7 @@ def create_app(
         if not path.is_file():
             raise HTTPException(
                 status_code=404,
-                detail=f"Image file for {frame_id} not found on disk "
-                f"(dataset root: {service.dataset_root}).",
+                detail=f"Image file for {frame_id} not found on disk.",
             )
         media_type = _MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
         return FileResponse(path, media_type=media_type)

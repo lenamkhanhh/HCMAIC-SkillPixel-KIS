@@ -143,7 +143,7 @@ def load_index_artifacts(artifacts_dir: Path) -> IndexArtifacts:
             )
 
     catalog = load_catalog(artifacts_dir / CATALOG_NAME)
-    embeddings = np.load(artifacts_dir / EMBEDDINGS_NAME)
+    embeddings = np.load(artifacts_dir / EMBEDDINGS_NAME, allow_pickle=False)
     with open(artifacts_dir / ID_MAP_NAME, encoding="utf-8") as f:
         id_map = json.load(f)
     with open(artifacts_dir / INDEX_MANIFEST_NAME, encoding="utf-8") as f:
@@ -152,6 +152,11 @@ def load_index_artifacts(artifacts_dir: Path) -> IndexArtifacts:
         dataset_manifest = json.load(f)
 
     n = len(catalog)
+    if index_manifest.get("format") != INDEX_FORMAT_VERSION:
+        raise ArtifactError(
+            f"Unsupported index format {index_manifest.get('format')!r}; "
+            f"expected {INDEX_FORMAT_VERSION!r}. Rebuild the index."
+        )
     if embeddings.ndim != 2:
         raise ArtifactError(f"embeddings.npy must be 2-D, got {embeddings.shape}")
     if embeddings.shape[0] != n or len(id_map) != n:
@@ -159,10 +164,38 @@ def load_index_artifacts(artifacts_dir: Path) -> IndexArtifacts:
             f"Artifact row mismatch: catalog={n}, embeddings={embeddings.shape[0]}, "
             f"id_map={len(id_map)}. Rebuild the index."
         )
+    if int(index_manifest.get("n_frames", -1)) != n:
+        raise ArtifactError(
+            f"Frame count mismatch: manifest says "
+            f"{index_manifest.get('n_frames')}, catalog has {n}. Rebuild the index."
+        )
     if int(index_manifest.get("dimension", -1)) != int(embeddings.shape[1]):
         raise ArtifactError(
             f"Dimension mismatch: manifest says {index_manifest.get('dimension')}, "
             f"embeddings.npy has {embeddings.shape[1]}. Rebuild the index."
+        )
+    embedding_manifest = index_manifest.get("embedding", {})
+    if int(embedding_manifest.get("dimension", -1)) != int(embeddings.shape[1]):
+        raise ArtifactError(
+            f"Embedding dimension mismatch: provider manifest says "
+            f"{embedding_manifest.get('dimension')}, embeddings.npy has "
+            f"{embeddings.shape[1]}. Rebuild the index."
+        )
+    expected_dataset_hash = str(index_manifest.get("dataset_manifest_hash", ""))
+    actual_dataset_hash = manifest_hash(dataset_manifest)
+    if not expected_dataset_hash or expected_dataset_hash != actual_dataset_hash:
+        raise ArtifactError(
+            "Dataset manifest hash mismatch: index_manifest.json and "
+            "dataset_manifest.json do not describe the same dataset. Rebuild the index."
+        )
+    if not np.isfinite(embeddings).all():
+        raise ArtifactError(
+            "embeddings.npy contains non-finite values. Rebuild the index."
+        )
+    norms = np.linalg.norm(embeddings, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-4, rtol=1e-4):
+        raise ArtifactError(
+            "embeddings.npy rows are not L2-normalized. Rebuild the index."
         )
     catalog_ids = [r.frame_id for r in catalog]
     if catalog_ids != list(id_map):

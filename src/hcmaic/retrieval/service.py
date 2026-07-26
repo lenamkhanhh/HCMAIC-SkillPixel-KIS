@@ -55,6 +55,13 @@ class RetrievalService:
                 f"provider must match the one used at build time "
                 f"({emb_info.get('version')})."
             )
+        expected_version = str(emb_info.get("version", ""))
+        if not expected_version or self.text_provider.version != expected_version:
+            raise ValueError(
+                f"Text provider version {self.text_provider.version!r} != "
+                f"index embedding version {expected_version!r}. Use the exact "
+                "provider/model that built the index."
+            )
         self.index = index or _make_index(
             str(artifacts.index_manifest.get("index_provider", "exact-numpy"))
         )
