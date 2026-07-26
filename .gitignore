@@ -1,1 +1,18 @@
 *.pyc
+__pycache__/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Generated artifacts (never commit embeddings/indexes/reports)
+artifacts/
+!artifacts/.gitkeep
+
+# Model weights and download caches (upstream_reference/ keeps its tracked .pth)
+.cache/
+models--*/
