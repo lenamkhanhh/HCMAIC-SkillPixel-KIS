@@ -45,6 +45,24 @@ timeline, query history, canonical submission preview) plus the JSON API:
 `GET /health`, `GET /system/info`, `POST /search`, `GET /frames/{frame_id}`,
 `GET /videos/{video_id}/timeline`, `POST /submit/preview`.
 
+## Raw video ingestion (Milestone 1)
+
+Turn raw videos (MP4/MKV/AVI/MOV) into a searchable dataset:
+
+```powershell
+uv sync --extra video      # OpenCV fallback backend (skip if FFmpeg is on PATH)
+uv run hcmaic ingest-video --input <video-file-or-dir> --output data/myset --interval 2.0
+uv run hcmaic validate-data --input data/myset
+uv run hcmaic build-index  --input data/myset --output artifacts/myset
+uv run hcmaic search       --index artifacts/myset --query "..." --top-k 10
+```
+
+Backends: FFmpeg CLI when `ffmpeg`+`ffprobe` are on PATH, otherwise the
+pure-pip OpenCV wheel. Uniform time sampling + near-duplicate removal;
+per-video results, warnings, and failures land in
+`<output>/ingest_report.json`. Re-ingesting an existing video requires
+`--force`.
+
 ## Real (BTC-style) data
 
 Point `--input` at a directory with the BTC conventions:

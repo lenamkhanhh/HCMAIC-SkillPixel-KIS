@@ -89,3 +89,21 @@ The API omits local dataset/artifact paths from `/system/info`, whitespace-only
 queries are invalid, and UI metadata is rendered as text nodes rather than
 HTML. Reason: browser-visible data must not become an injection or leak local
 filesystem layout. Rejected: trusting fixture metadata or exposing debug paths.
+
+## 2026-07-27 — D9: Video ingestion backends = FFmpeg CLI first, OpenCV wheel fallback
+
+`hcmaic ingest-video` extracts keyframes from raw MP4/MKV/AVI/MOV. Backend
+order: (1) ffmpeg+ffprobe when both are on PATH; (2) `opencv-python-headless`
+(optional `[video]` extra — the pip wheel bundles its own codecs, so no
+system FFmpeg install is needed on this machine); neither present → one
+actionable error naming both options. Keyframe selection is uniform time
+sampling (default 2 s) plus deterministic near-duplicate dropping (mean abs
+grayscale diff on a 32×32 thumbnail < 2.0). Output reuses the existing
+dataset layout (keyframes/, keyframe_mapping.csv with extra width/height
+columns, media-info/*.json) so validate/build-index/search work unchanged.
+Rejected: PySceneDetect now (out of original scope; uniform sampling is the
+documented fallback and a shot-detector slot exists for TV2); imageio-ffmpeg
+(second ffmpeg distribution channel for no added capability).
+Timestamps come from decoder PTS (CAP_PROP_POS_MSEC); when the codec gives
+no PTS the code falls back to frame_idx/fps once and records a VFR-drift
+warning in the ingest report — never silently.

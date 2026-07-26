@@ -1,6 +1,8 @@
 """hcmaic CLI.
 
 Commands:
+  ingest-video  --input <video file|dir> --output <dataset>
+                [--interval 2.0] [--max-frames 500] [--video-id ID] [--force]
   validate-data --input <dataset>
   build-index   --input <dataset> --output <artifacts>
                 [--provider mock|clip] [--index exact-numpy|faiss]
@@ -15,6 +17,44 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    from hcmaic.ingestion.video import IngestError, ingest_dataset
+
+    try:
+        results, failures = ingest_dataset(
+            Path(args.input),
+            Path(args.output),
+            video_id=args.video_id,
+            interval_s=args.interval,
+            max_frames=args.max_frames,
+            force=args.force,
+        )
+    except IngestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    for result in results:
+        info = result.info
+        print(
+            f"Ingested {info.video_id}: {result.n_kept} keyframe(s) "
+            f"({result.n_candidates} candidates, {result.n_duplicates} "
+            f"near-duplicates dropped), {info.width}x{info.height} "
+            f"@ {info.fps:.2f} fps, {info.duration_s:.1f}s, "
+            f"backend={info.backend}."
+        )
+        for warning in result.warnings:
+            print(f"  warn: {warning}")
+    for failure in failures:
+        print(f"  FAILED {failure['file']}: {failure['error']}", file=sys.stderr)
+    print(f"Dataset: {args.output}  (report: {Path(args.output) / 'ingest_report.json'})")
+    if results:
+        print(
+            f"Next: uv run hcmaic validate-data --input {args.output} && "
+            f"uv run hcmaic build-index --input {args.output} --output <artifacts>"
+        )
+    return 0 if not failures else 1
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -148,6 +188,29 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hcmaic", description="HCMAIC keyframe-search MVP"
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser(
+        "ingest-video",
+        help="Extract keyframes from raw videos (MP4/MKV/AVI/MOV) into a dataset",
+    )
+    p.add_argument("--input", required=True, help="Video file or directory of videos")
+    p.add_argument("--output", required=True, help="Dataset directory to create/extend")
+    p.add_argument(
+        "--interval", type=float, default=2.0,
+        help="Sampling interval in seconds (default: 2.0)",
+    )
+    p.add_argument(
+        "--max-frames", type=int, default=500,
+        help="Maximum keyframes per video (default: 500)",
+    )
+    p.add_argument(
+        "--video-id", help="Override the video id (single-file ingest only)"
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help="Replace keyframes/mapping if the video was already ingested",
+    )
+    p.set_defaults(func=_cmd_ingest)
 
     p = sub.add_parser("validate-data", help="Validate a dataset directory")
     p.add_argument("--input", required=True)

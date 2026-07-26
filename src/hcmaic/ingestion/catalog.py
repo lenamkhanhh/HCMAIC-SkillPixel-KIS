@@ -16,7 +16,10 @@ from hcmaic.ingestion.validator import load_media_info
 CATALOG_NAME = "catalog.jsonl"
 
 # Metadata keys copied from media-info JSON when present.
-_METADATA_KEYS = ("title", "author", "length", "publish_date", "watch_url", "keywords")
+_METADATA_KEYS = (
+    "title", "author", "length", "publish_date", "watch_url", "keywords",
+    "width", "height",
+)
 
 
 def build_catalog(root: Path) -> list[FrameRecord]:

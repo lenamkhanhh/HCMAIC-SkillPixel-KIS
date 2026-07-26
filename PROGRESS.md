@@ -150,3 +150,27 @@ Newest entries at the bottom. Every entry: what ran, what resulted.
 - Restore with:
   `git clone artifacts/checkpoints/hcmaic-2026-foundation-92e208e.bundle restored`
   then `git checkout hcmaic-2026-foundation`.
+
+## 2026-07-27 Milestone 1 — Raw video ingestion
+
+- Phase 0 baseline: 118 passed, ruff/mypy clean, tree clean at `a3f5025`.
+  charset-normalizer warning fixed (pin <3.4.9 in clip extra; 3.4.9 drops
+  `__version__` which requests' compat check needs). Stale `hcmaic.exe`
+  process blocked `uv sync` once — killed PID 27264.
+- Implemented `src/hcmaic/ingestion/video.py`: probe + extraction with
+  ffmpeg-CLI backend (when on PATH) and OpenCV wheel fallback
+  (`uv sync --extra video`); uniform sampling (--interval), deterministic
+  near-duplicate drop, mapping CSV with width/height, media-info JSON
+  (file name only — no local paths), ingest_report.json, --force replace,
+  batch ingest that continues past broken files.
+- CLI: `hcmaic ingest-video --input <file|dir> --output <dataset>`.
+- Smoke (OpenCV backend, no ffmpeg on machine): 12-frame AVI → 4 keyframes
+  (2 dups dropped) → validate 0 errors → mock index → "a blue frame" →
+  rank 1 = blue keyframe t=2000ms.
+- Security fix found during hardening: explicit `--video-id` was not
+  validated → path traversal possible; now rejected + 5 regression tests.
+- Tests: +26 (24 ingest unit + 2 E2E/error-path) → 144 passed total;
+  coverage 92% (video.py 81%, uncovered = ffmpeg paths, absent here);
+  ruff + mypy clean.
+- Docs: MILESTONE_1_IMPLEMENTATION.md, OVERNIGHT_REPORT.md, README section,
+  DECISIONS.md D9.

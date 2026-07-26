@@ -17,9 +17,14 @@ dependencies = [
 clip = [
     "torch>=2.2",
     "transformers>=4.44,<5",
+    # <3.4.9: later builds drop __version__, which requests' compat check needs
+    "charset-normalizer>=3.3,<3.4.9",
 ]
 faiss = [
     "faiss-cpu>=1.8",
+]
+video = [
+    "opencv-python-headless>=4.9",
 ]
 
 [project.scripts]
@@ -32,6 +37,8 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.6",
     "mypy>=1.10",
+    # video ingestion tests generate and read tiny fixture videos
+    "opencv-python-headless>=4.9",
 ]
 
 [build-system]
@@ -67,5 +74,5 @@ warn_unused_ignores = false
 exclude = ["upstream_reference/"]
 
 [[tool.mypy.overrides]]
-module = ["faiss", "faiss.*", "torch", "torch.*", "transformers", "transformers.*", "PIL", "PIL.*"]
+module = ["faiss", "faiss.*", "torch", "torch.*", "transformers", "transformers.*", "PIL", "PIL.*", "cv2", "cv2.*"]
 ignore_missing_imports = true
