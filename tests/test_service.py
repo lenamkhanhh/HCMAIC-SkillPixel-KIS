@@ -123,3 +123,11 @@ def test_provider_dimension_gate(built_artifacts_dir: Path, sample_root: Path):
     wrong = DeterministicMockEmbeddingProvider(dimension=32)
     with pytest.raises(ValueError, match="dimension"):
         RetrievalService(artifacts, text_provider=wrong, dataset_root=sample_root)
+
+
+def test_provider_version_gate(built_artifacts_dir: Path, sample_root: Path):
+    artifacts = load_index_artifacts(built_artifacts_dir)
+    wrong = DeterministicMockEmbeddingProvider()
+    wrong.version = "mock-palette-incompatible"
+    with pytest.raises(ValueError, match="version"):
+        RetrievalService(artifacts, text_provider=wrong, dataset_root=sample_root)

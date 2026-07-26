@@ -56,6 +56,16 @@ def test_negative_timestamp(dataset_copy: Path):
     assert "negative-timestamp" in _codes(report.errors)
 
 
+def test_non_finite_timing_values(dataset_copy: Path):
+    mapping = dataset_copy / "keyframe_mapping.csv"
+    content = mapping.read_text(encoding="utf-8")
+    content += "L01_V001,9,nan,25.0,225\n"
+    content += "L01_V001,10,2.0,inf,250\n"
+    mapping.write_text(content, encoding="utf-8")
+    report = validate_dataset(dataset_copy)
+    assert "non-finite-timing" in _codes(report.errors)
+
+
 def test_timestamp_beyond_duration(dataset_copy: Path):
     # L01_V001 declares length=60 in media-info; add a frame at 100s with a
     # real image so only the duration check fires.

@@ -27,6 +27,9 @@ def test_system_info(client: TestClient):
     assert data["n_frames"] == 12
     assert data["index_manifest"]["embedding"]["version"] == "mock-palette-v1"
     assert len(data["video_ids"]) == 5
+    serialized = str(data)
+    assert "dataset_root" not in serialized
+    assert "artifacts_dir" not in serialized
 
 
 def test_search_success(client: TestClient):
@@ -71,6 +74,7 @@ def test_search_empty_result_is_valid(client: TestClient):
 
 def test_search_validation_errors(client: TestClient):
     assert client.post("/search", json={"text": ""}).status_code == 422
+    assert client.post("/search", json={"text": "   "}).status_code == 422
     assert client.post("/search", json={}).status_code == 422
     assert client.post("/search", json={"text": "x", "top_k": 0}).status_code == 422
     res = client.post(
