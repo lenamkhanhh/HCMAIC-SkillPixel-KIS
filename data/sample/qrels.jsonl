@@ -1,0 +1,6 @@
+{"query_id": "q1", "relevant_frame_ids": ["L01_V001:001"]}
+{"query_id": "q2", "relevant_frame_ids": ["L01_V001:002"]}
+{"query_id": "q3", "relevant_frame_ids": ["L01_V002:001"]}
+{"query_id": "q4", "relevant_frame_ids": ["L01_V003:002"]}
+{"query_id": "q5", "relevant_frame_ids": ["L01_V005:002"]}
+{"query_id": "q6", "relevant_frame_ids": ["L01_V001:003", "L01_V005:001"]}

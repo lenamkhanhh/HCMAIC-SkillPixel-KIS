@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HCMAIC keyframe search</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>HCMAIC keyframe search</h1>
+  <span id="sysinfo" class="muted"></span>
+</header>
+
+<section id="controls">
+  <input id="query" type="text" placeholder="Describe the moment… (e.g. a solid red keyframe)" autofocus>
+  <select id="taskType" title="Task type">
+    <option value="kis" selected>KIS</option>
+    <option value="avs">AVS</option>
+    <option value="qa">QA</option>
+    <option value="kisc">KISC</option>
+  </select>
+  <select id="topK" title="Top-K">
+    <option>5</option><option selected>10</option><option>20</option><option>50</option>
+  </select>
+  <select id="videoFilter" title="Video filter"><option value="">All videos</option></select>
+  <button id="searchBtn">Search</button>
+</section>
+
+<section id="status" class="muted" hidden></section>
+
+<main>
+  <div id="results" class="grid"></div>
+
+  <aside id="detail" hidden>
+    <button id="closeDetail" class="close">×</button>
+    <h2 id="detailTitle"></h2>
+    <img id="detailImage" alt="keyframe">
+    <dl id="detailMeta"></dl>
+    <h3>Timeline (neighboring keyframes)</h3>
+    <div id="neighbors" class="strip"></div>
+    <h3>Submission preview</h3>
+    <div class="submitrow">
+      <input id="answer" type="text" placeholder="answer (optional, QA)">
+      <button id="previewBtn">Preview submission</button>
+    </div>
+    <pre id="submissionPreview" class="muted">No preview yet. This is a canonical preview only — nothing is submitted anywhere.</pre>
+  </aside>
+</main>
+
+<section id="historyBox">
+  <h3>Query history <button id="clearHistory">clear</button></h3>
+  <ul id="history"></ul>
+</section>
+
+<script src="/app.js"></script>
+</body>
+</html>
