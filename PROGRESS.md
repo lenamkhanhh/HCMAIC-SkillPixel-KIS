@@ -140,3 +140,13 @@ Newest entries at the bottom. Every entry: what ran, what resulted.
   p50 18.855 ms, p95 43.043 ms. Smoke only — no BTC-scale quality claim.
 - All optional paths now resolved: FAISS verified, real CLIP smoke verified,
   CUDA unavailable on this wheel (documented for TV3).
+
+## 2026-07-27 Backup checkpoint
+
+- Working tree clean at `92e208e`; tagged `v0-handoff`.
+- Full-history backup: `git bundle create artifacts/checkpoints/hcmaic-2026-foundation-92e208e.bundle --all`
+  (28 MB, includes every branch/tag + upstream history); `git bundle verify` OK;
+  SHA-256 recorded in `artifacts/checkpoints/SHA256SUMS.txt` and verified.
+- Restore with:
+  `git clone artifacts/checkpoints/hcmaic-2026-foundation-92e208e.bundle restored`
+  then `git checkout hcmaic-2026-foundation`.
