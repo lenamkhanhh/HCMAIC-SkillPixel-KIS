@@ -161,5 +161,6 @@ def test_ui_served_at_root(client: TestClient):
     res = client.get("/")
     assert res.status_code == 200
     assert "HCMAIC keyframe search" in res.text
+    assert '<link rel="icon" href="data:,' in res.text
     assert client.get("/app.js").status_code == 200
     assert client.get("/style.css").status_code == 200
