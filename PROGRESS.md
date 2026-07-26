@@ -26,3 +26,88 @@ Newest entries at the bottom. Every entry: what ran, what resulted.
   cpython 3.11 available for uv download. Git identity present (`Khanhdz`),
   not modified.
 - Created `UPSTREAM.md`, `GOAL.md`, `DECISIONS.md`, `PROGRESS.md`.
+- Moved upstream runnables to `upstream_reference/` via `git mv` (history
+  kept); removed `requirements.txt` (preserved in git history; replaced by
+  `pyproject.toml` + `uv.lock`).
+- `uv python install 3.11` → cpython-3.11.15 installed.
+- `uv sync --python 3.11` → .venv created, core+dev deps locked and synced.
+- Commit `03b560c` = Phase 0 checkpoint. Phase 0 exit gate: PASS
+  (pinned upstream + license + provenance intact, baseline documented from
+  inspection, checkpoint restorable via git, `Learn/` untouched).
+
+## 2026-07-26 Phases 1–4 — Contracts, fixture, providers, index, API, CLI
+
+- Implemented `src/hcmaic/`: contracts (pydantic v2), mapping parser
+  (single-file + per-video BTC layouts), validator (10 failure modes),
+  catalog.jsonl builder, dataset manifest (sha256), mock + real-CLIP
+  embedding providers, ExactNumpyIndex + optional FaissIndex, versioned
+  index artifacts with load-time consistency gates, RetrievalService,
+  FastAPI app, argparse CLI.
+- `uv run python scripts/make_fixture.py` → fixture: 5 videos, 12 keyframes,
+  6 queries + qrels committed under `data/sample/`.
+- `uv run hcmaic validate-data --input data/sample` → 0 errors, 2 expected
+  warnings (missing optional metadata).
+- `uv run hcmaic build-index --input data/sample --output artifacts/sample`
+  → 12 frames, dim 64, mock-palette-v1, exact-numpy.
+- `uv run hcmaic search --index artifacts/sample --query "a solid red keyframe"`
+  → rank 1 = `L01_V001:001` (the red keyframe) score 0.9947; video filter
+  (`--video-id L01_V004`) correctly restricts results.
+
+## 2026-07-26 Phase 5 — Operator UI (verified in a real browser)
+
+- Plain HTML/CSS/JS UI served by FastAPI at `/`.
+- `uv run hcmaic serve --index artifacts/sample --port 8017` then Chrome
+  (browser pane): system info loaded (12 frames · 5 videos · index version),
+  video-filter dropdown populated from `/system/info`; search rendered the
+  top-10 grid (#1 = L01_V001:001 score 0.9947); card click opened the detail
+  pane with metadata + image (naturalWidth > 0 → image actually served);
+  timeline strip ordered 1.0s*(current), 5.0s, 9.0s; submission preview
+  rendered the CanonicalSubmission JSON with the search's query_id; video
+  filter through the UI returned only L01_V004; empty query produced the
+  error state "Enter a query first."; query history persisted in
+  localStorage.
+
+## 2026-07-26 Phase 6 — Evaluator
+
+- `uv run hcmaic evaluate --index artifacts/sample --queries data/sample/queries.jsonl --qrels data/sample/qrels.jsonl`
+  → mode deterministic-mock, 6/6 scored, Recall@1/5/10 = 1.0, MRR = 1.0,
+  p50 0.165 ms, p95 0.325 ms; reports written
+  (evaluation_report.json + per_query_results.jsonl). Fixture was NOT tuned
+  after observing evaluation results (queries/qrels authored before the
+  first evaluator run; only the plumbing was fixed afterwards).
+
+## 2026-07-26 Phase 7 — Tests, lint, types
+
+- `uv run pytest` → 105 passed (mock-only), then 111 passed with FAISS
+  extra installed. 0 failed, 0 skipped (mock env skips the 6 FAISS tests).
+- `uv run pytest --cov=src/hcmaic` → 95% total coverage (target ≥80%);
+  only optional heavy providers (clip_real, faiss_index) excluded from
+  measurement, faiss covered by its optional test module.
+- `uv run ruff check src tests scripts` → clean (after 3 fixes).
+- `uv run mypy src` → clean (after 1 fix: PIL Resampling enum).
+- Commit `d372be4` = Phases 1–6 checkpoint.
+
+## 2026-07-26 Optional paths
+
+- FAISS: `uv sync --extra faiss` → faiss-cpu 1.14.3 installed cleanly on
+  Windows/py3.11. Equivalence vs ExactNumpyIndex verified on 7 queries +
+  filtered search (identical ids, scores within 1e-5); CLI
+  `build-index --index faiss` + `search --index-provider faiss` verified.
+- CUDA: not attempted (PyPI Windows torch wheel is CPU-only; CUDA recorded
+  as unverified optional path — see FINAL_HANDOFF.md ticket for TV3).
+
+## 2026-07-26 Independent audit and handoff
+
+- Clean locked sync, lint, mypy, core tests, coverage, fixture E2E, and optional
+  FAISS parity all pass. The final combined suite is 118 passed; core coverage
+  is 95%.
+- Added regression coverage and fixes for artifact drift, unsafe embeddings,
+  provider-version drift, API path leakage, whitespace queries, timing
+  validation, metadata HTML injection, and the browser favicon 404.
+- `pip-audit` reports no known vulnerabilities after updating Pillow to 12.3.0.
+- Playwright smoke verified search, filtering, detail image, timeline,
+  submission preview, and zero console errors on the local server.
+- `VERIFICATION_REPORT.md` and `FINAL_HANDOFF.md` describe evidence, limits,
+  and the five team tickets. `Learn/` remained untouched.
+- A release archive and SHA-256 manifest are created under `artifacts/` after
+  this source checkpoint; generated artifacts are excluded from Git.

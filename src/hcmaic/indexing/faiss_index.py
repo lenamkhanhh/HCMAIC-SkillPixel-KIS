@@ -8,6 +8,8 @@ mission-critical path.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from hcmaic.indexing.base import SearchIndex
@@ -25,7 +27,7 @@ class FaissIndex(SearchIndex):
                 "(ExactNumpyIndex is the always-available fallback)."
             ) from exc
         self._faiss = faiss
-        self._index = None
+        self._index: Any = None
         self._frame_ids: list[str] = []
         self._matrix: np.ndarray | None = None
 

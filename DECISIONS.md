@@ -75,3 +75,17 @@ must be structurally impossible.
 BTC mapping gives `pts_time` (seconds, float). `timestamp_ms` is
 `round(pts_time * 1000)`; `pts` is preserved as given. `frame_idx / fps` is
 never used to derive timestamps (VFR hazard, per SkillPixel Buoi 2).
+
+## 2026-07-26 — D9: Fail closed on artifact and provider drift
+
+Artifact loading rejects manifest/hash/frame-count/dimension mismatches,
+non-finite or non-normalized embeddings, and a text-provider version that
+does not match the index manifest. Reason: stale or mixed artifacts must not
+silently produce a competition result. Rejected: warning-only startup checks.
+
+## 2026-07-26 — D10: Keep operator metadata text-safe and paths private
+
+The API omits local dataset/artifact paths from `/system/info`, whitespace-only
+queries are invalid, and UI metadata is rendered as text nodes rather than
+HTML. Reason: browser-visible data must not become an injection or leak local
+filesystem layout. Rejected: trusting fixture metadata or exposing debug paths.
