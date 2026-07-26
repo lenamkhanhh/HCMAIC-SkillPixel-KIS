@@ -111,3 +111,32 @@ Newest entries at the bottom. Every entry: what ran, what resulted.
   and the five team tickets. `Learn/` remained untouched.
 - A release archive and SHA-256 manifest are created under `artifacts/` after
   this source checkpoint; generated artifacts are excluded from Git.
+
+## 2026-07-26 Final packaging verification
+
+- `scripts/verify.ps1` full run → all gates pass (env/import, mypy, ruff,
+  118 tests + 95% coverage, fixture E2E validate/build/search/evaluate).
+- Canonical package rebuilt from HEAD:
+  `git archive --format=zip -o artifacts/hcmaic-system-v0.zip HEAD
+  ":(exclude)upstream_reference/src/transnetv2/transnetv2-pytorch-weights.pth"`
+  → 124 files; contains source, tests, fixture data, scripts, docs,
+  pyproject + uv.lock; excludes weights/.venv/generated artifacts.
+- `SHA256SUMS.txt` regenerated for both archives; `sha256sum -c` → OK for
+  hcmaic-system-v0.zip and hcmaic-system-v1.zip.
+- Gotcha recorded: `uv sync --extra faiss` (without `--extra clip`) prunes
+  torch/transformers — always pass every wanted extra in one sync command.
+
+## 2026-07-27 Real CLIP smoke (optional path)
+
+- `uv sync --extra clip --extra faiss` → torch 2.13.0+cpu, transformers
+  4.57.6, cuda: False (PyPI CPU wheel; CUDA remains unverified/optional).
+- `uv run hcmaic build-index --input data/sample --output artifacts/sample-clip --provider clip`
+  → downloaded openai/clip-vit-base-patch32 (~600 MB, HF cache 1.2 GB),
+  built 12 frames dim 512; index_manifest records model/device/batch.
+- `uv run hcmaic search --index artifacts/sample-clip --query "a solid red image" --top-k 3`
+  → #1 L01_V001:001 (correct red keyframe) score 0.2877.
+- `uv run hcmaic evaluate --index artifacts/sample-clip ...` → mode
+  real-clip-smoke, 6/6 scored, Recall@1/5/10 = 1.0, MRR = 1.0,
+  p50 18.855 ms, p95 43.043 ms. Smoke only — no BTC-scale quality claim.
+- All optional paths now resolved: FAISS verified, real CLIP smoke verified,
+  CUDA unavailable on this wheel (documented for TV3).

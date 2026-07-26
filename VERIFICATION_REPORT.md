@@ -47,9 +47,25 @@ uv run pytest -q
 uvx --from pip-audit pip-audit --path .venv\Lib\site-packages
 ```
 
+## Real-CLIP smoke (added after the audit)
+
+After the audit above, the optional CLIP path was exercised once on the
+fixture (allowed: network available, mock critical path already green):
+
+- `uv sync --extra clip --extra faiss` → torch 2.13.0+cpu,
+  transformers 4.57.6 (PyPI Windows wheel is CPU-only; CUDA unavailable).
+- `hcmaic build-index --provider clip` → 12 frames, dim 512; manifest
+  records `openai/clip-vit-base-patch32`, device `cpu`, batch 16.
+- CLI search "a solid red image" → rank 1 `L01_V001:001` (correct frame).
+- Evaluator mode `real-clip-smoke`: 6/6 scored, Recall@1 = 1.0, MRR = 1.0,
+  p50 18.9 ms, p95 43.0 ms (CPU text encoding dominates).
+
+This is a smoke test on the 12-frame synthetic fixture only; it is not
+evidence of BTC-scale retrieval quality or latency.
+
 ## Explicitly unverified
 
 Real BTC data ingestion and license/permission for any supplied media,
-real CLIP weights and retrieval quality, GPU/CUDA execution, large-scale
-latency, and BTC portal submission/evaluation remain team-owned follow-up work.
-The optional real-CLIP path is intentionally not downloaded during this audit.
+CLIP retrieval quality at competition scale, GPU/CUDA execution (the
+installed torch wheel is CPU-only), large-scale latency, and BTC portal
+submission/evaluation remain team-owned follow-up work.
