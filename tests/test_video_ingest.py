@@ -213,6 +213,41 @@ def test_failed_force_preserves_previous_dataset(
     } == frames_before
 
 
+def test_failed_force_commit_restores_previous_dataset(
+    monkeypatch: pytest.MonkeyPatch, color_video: Path, tmp_path: Path
+):
+    out = tmp_path / "dataset"
+    first = ingest_video(color_video, out, interval_s=1.0)
+    mapping_before = (out / "keyframe_mapping.csv").read_bytes()
+    media_before = (out / "media-info" / f"{first.info.video_id}.json").read_bytes()
+    frames_before = {
+        p.name: p.read_bytes()
+        for p in (out / "keyframes" / first.info.video_id).glob("*.jpg")
+    }
+
+    original_replace = vid.os.replace
+
+    def fail_on_mapping_replace(src, dst):
+        if (
+            Path(dst).name == "keyframe_mapping.csv"
+            and Path(src).parent.name == "_commit"
+        ):
+            raise OSError("simulated mapping replace failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(vid.os, "replace", fail_on_mapping_replace)
+
+    with pytest.raises(IngestError, match="atomic replacement failed"):
+        ingest_video(color_video, out, interval_s=2.0, force=True)
+
+    assert (out / "keyframe_mapping.csv").read_bytes() == mapping_before
+    assert (out / "media-info" / f"{first.info.video_id}.json").read_bytes() == media_before
+    assert {
+        p.name: p.read_bytes()
+        for p in (out / "keyframes" / first.info.video_id).glob("*.jpg")
+    } == frames_before
+
+
 def test_parse_ffmpeg_showinfo_preserves_non_zero_pts():
     stderr = """
 [Parsed_showinfo_1 @ 000001] n:   0 pts: 22500 pts_time:2.5 pos:0

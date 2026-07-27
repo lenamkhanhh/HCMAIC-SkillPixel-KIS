@@ -34,6 +34,19 @@ def test_weighted_late_fusion_respects_modality_weights():
     assert results[0].final_score > results[1].final_score
 
 
+def test_weighted_late_fusion_handles_equal_scores_and_zero_weights():
+    equal = {
+        "visual": [ChannelHit("A", "V1", 1000, "visual", 0.5, 1, "clip")],
+        "ocr": [ChannelHit("B", "V1", 2000, "ocr", 0.9, 1, "mock-ocr")],
+    }
+    results = weighted_late_fusion(
+        equal, weights={"visual": 0.0, "ocr": 2.0}, top_k=3
+    )
+    assert [item.entity_id for item in results] == ["B"]
+    assert results[0].normalized_scores["ocr"] == 1.0
+    assert results[0].final_score == 2.0
+
+
 def test_weighted_fusion_rejects_unknown_or_negative_weights():
     with pytest.raises(ValueError, match="weight"):
         weighted_late_fusion(_channels(), weights={"visual": -1.0}, top_k=3)

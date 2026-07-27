@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from hcmaic.embedding.registry import (
+    create_provider,
     get_provider_descriptor,
     list_provider_descriptors,
     provider_doctor,
@@ -22,6 +23,15 @@ def test_provider_doctor_is_non_downloading_and_actionable():
     assert report["model_revision"]
     assert report["install"]
     assert "download" not in report["action"].lower()
+
+
+def test_optional_provider_construction_stays_lazy():
+    provider = create_provider("siglip2", device="cpu")
+    report = provider.info()
+    assert report["provider"] == "siglip2"
+    assert report["evidence_level"] == "INTERFACE_ONLY"
+    with pytest.raises(RuntimeError, match="interface-only"):
+        provider.embed_texts(["hello"])
 
 
 def test_unknown_provider_is_explicit():
