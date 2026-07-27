@@ -30,6 +30,9 @@ def test_system_info(client: TestClient):
     serialized = str(data)
     assert "dataset_root" not in serialized
     assert "artifacts_dir" not in serialized
+    assert data["runtime"]["embedding_provider"] == "mock"
+    assert data["runtime"]["index_provider"] == "exact-numpy"
+    assert data["runtime"]["fusion"] == "single-stage"
 
 
 def test_search_success(client: TestClient):
@@ -91,6 +94,11 @@ def test_get_frame(client: TestClient):
     assert neighbor_ids == ["L01_V001:001", "L01_V001:002", "L01_V001:003"]
     current = [n for n in data["neighbors"] if n["is_current"]]
     assert len(current) == 1 and current[0]["frame_id"] == "L01_V001:002"
+    assert data["shot_context"] == {
+        "same_shot": [],
+        "previous_shot": [],
+        "next_shot": [],
+    }
 
 
 def test_get_frame_404(client: TestClient):
@@ -155,6 +163,24 @@ def test_submit_preview_validation(client: TestClient):
         json={"query_id": "", "task_type": "kis", "frame_id": "L01_V005:002"},
     )
     assert res.status_code == 422
+
+
+def test_feedback_endpoint_records_structured_session_feedback(client: TestClient):
+    response = client.post(
+        "/feedback",
+        json={
+            "session_id": "session-1",
+            "query_revision": 2,
+            "positive_ids": ["L01_V001:001"],
+            "negative_ids": ["L01_V001:002"],
+            "prior_result_ids": ["L01_V001:001", "L01_V001:002"],
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "recorded"
+    assert data["event"]["session_id"] == "session-1"
+    assert data["record_count"] >= 1
 
 
 def test_ui_served_at_root(client: TestClient):
