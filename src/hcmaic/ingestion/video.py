@@ -21,10 +21,15 @@ grayscale difference threshold.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
+import math
+import os
+import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -271,24 +276,36 @@ def _iter_candidates_ffmpeg(
     tmp_dir = work_dir / "_ffmpeg_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     pattern = tmp_dir / "cand_%06d.jpg"
+    select = (
+        "select=isnan(prev_selected_t)+"
+        f"gte(t-prev_selected_t\\,{interval_s}),showinfo"
+    )
     cmd = [
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        ffmpeg, "-hide_banner", "-loglevel", "info", "-y",
         "-i", str(info.source_path),
-        "-vf", f"fps=1/{interval_s}",
+        "-vf", select,
         "-frames:v", str(max_frames),
+        "-fps_mode", "vfr",
         "-q:v", "2", str(pattern),
     ]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=True)
+        completed = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=600, check=True
+        )
     except subprocess.CalledProcessError as exc:
         raise IngestError(
             f"{info.video_id}: ffmpeg extraction failed "
             f"({(exc.stderr or '').strip()[:200]})."
         ) from exc
     try:
-        for i, jpg in enumerate(sorted(tmp_dir.glob("cand_*.jpg"))):
-            # fps filter samples at t = i * interval (first frame at ~0)
-            pts_s = i * interval_s
+        images = sorted(tmp_dir.glob("cand_*.jpg"))
+        timestamps = _parse_ffmpeg_showinfo(completed.stderr)
+        if len(images) != len(timestamps):
+            raise IngestError(
+                f"{info.video_id}: FFmpeg emitted {len(images)} image(s) but "
+                f"{len(timestamps)} decoder timestamp(s); refusing guessed timestamps."
+            )
+        for jpg, pts_s in zip(images, timestamps, strict=True):
             with Image.open(jpg) as im:
                 image = np.asarray(im.convert("RGB"))
             yield _Candidate(
@@ -298,6 +315,30 @@ def _iter_candidates_ffmpeg(
             )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+_SHOWINFO_PTS_TIME_RE = re.compile(r"\bpts_time:(?P<pts>[^\s]+)")
+
+
+def _parse_ffmpeg_showinfo(stderr: str) -> list[float]:
+    """Parse decoder-derived PTS values from FFmpeg's ``showinfo`` filter."""
+    raw_values = [match.group("pts") for match in _SHOWINFO_PTS_TIME_RE.finditer(stderr)]
+    if not raw_values:
+        raise IngestError(
+            "FFmpeg did not report a usable frame timestamp; refusing CFR reconstruction."
+        )
+    timestamps: list[float] = []
+    for raw in raw_values:
+        try:
+            pts = float(raw)
+        except ValueError as exc:
+            raise IngestError(f"FFmpeg reported invalid timestamp {raw!r}.") from exc
+        if not math.isfinite(pts):
+            raise IngestError(f"FFmpeg reported non-finite timestamp {raw!r}.")
+        if pts < 0:
+            raise IngestError(f"FFmpeg reported negative timestamp {pts}.")
+        timestamps.append(pts)
+    return timestamps
 
 
 def _gray_thumb(image: np.ndarray) -> np.ndarray:
@@ -326,18 +367,59 @@ def ingest_video(
         raise IngestError(f"max_frames must be >= 1, got {max_frames}")
 
     out_root = Path(out_root)
-    warnings: list[str] = []
     info = probe_video(Path(video_path), video_id)
 
-    frames_dir = out_root / "keyframes" / info.video_id
-    if frames_dir.exists() and any(frames_dir.iterdir()):
-        if not force:
+    final_frames_dir = out_root / "keyframes" / info.video_id
+    if (
+        final_frames_dir.exists()
+        and any(final_frames_dir.iterdir())
+        and not force
+    ):
+        raise IngestError(
+            f"{info.video_id}: keyframes already exist in {out_root}. "
+            f"Re-run with --force to replace them."
+        )
+
+    staging_parent = out_root / ".hcmaic-staging"
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f"{info.video_id}-", dir=staging_parent)
+    )
+    try:
+        result = _generate_video_outputs(
+            info,
+            staging_root,
+            interval_s=interval_s,
+            max_frames=max_frames,
+            dedup_threshold=dedup_threshold,
+        )
+        from hcmaic.ingestion.validator import validate_dataset
+
+        report = validate_dataset(staging_root, check_images=True)
+        if not report.ok:
+            messages = "; ".join(issue.message for issue in report.errors[:3])
             raise IngestError(
-                f"{info.video_id}: keyframes already exist in {out_root}. "
-                f"Re-run with --force to replace them."
+                f"{info.video_id}: staged output failed validation: {messages}"
             )
-        shutil.rmtree(frames_dir)
-        _remove_mapping_rows(out_root, info.video_id)
+        _commit_staged_video(staging_root, out_root, info.video_id)
+        return result
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            staging_parent.rmdir()
+
+
+def _generate_video_outputs(
+    info: VideoInfo,
+    out_root: Path,
+    *,
+    interval_s: float,
+    max_frames: int,
+    dedup_threshold: float,
+) -> IngestResult:
+    """Generate and validate one video's files without touching live data."""
+    warnings: list[str] = []
+    frames_dir = out_root / "keyframes" / info.video_id
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     if info.backend == "ffmpeg":
@@ -409,6 +491,63 @@ def ingest_video(
         n_duplicates=n_duplicates,
         warnings=warnings,
     )
+
+
+def _commit_staged_video(staging_root: Path, out_root: Path, video_id: str) -> None:
+    """Replace one live video only after its staged dataset is valid."""
+    staged_frames = staging_root / "keyframes" / video_id
+    staged_media = staging_root / MEDIA_INFO_DIR / f"{video_id}.json"
+    staged_rows = _read_mapping_rows(staging_root)
+
+    commit_root = staging_root / "_commit"
+    backup_root = staging_root / "_backup"
+    commit_root.mkdir()
+    backup_root.mkdir()
+
+    existing_rows = [
+        row for row in _read_mapping_rows(out_root) if row.get("video_id") != video_id
+    ]
+    _write_mapping_rows(commit_root, existing_rows + staged_rows)
+    candidate_mapping = _mapping_path(commit_root)
+
+    final_frames = out_root / "keyframes" / video_id
+    final_mapping = _mapping_path(out_root)
+    final_media = out_root / MEDIA_INFO_DIR / f"{video_id}.json"
+    backup_frames = backup_root / "frames"
+    backup_mapping = backup_root / SINGLE_FILE_NAME
+    backup_media = backup_root / f"{video_id}.json"
+
+    final_frames.parent.mkdir(parents=True, exist_ok=True)
+    final_media.parent.mkdir(parents=True, exist_ok=True)
+    had_frames = final_frames.exists()
+    had_mapping = final_mapping.exists()
+    had_media = final_media.exists()
+    if had_mapping:
+        shutil.copy2(final_mapping, backup_mapping)
+    if had_media:
+        shutil.copy2(final_media, backup_media)
+
+    try:
+        if had_frames:
+            os.replace(final_frames, backup_frames)
+        os.replace(staged_frames, final_frames)
+        os.replace(candidate_mapping, final_mapping)
+        os.replace(staged_media, final_media)
+    except OSError as exc:
+        shutil.rmtree(final_frames, ignore_errors=True)
+        if backup_frames.exists():
+            os.replace(backup_frames, final_frames)
+        if backup_mapping.exists():
+            os.replace(backup_mapping, final_mapping)
+        elif not had_mapping:
+            final_mapping.unlink(missing_ok=True)
+        if backup_media.exists():
+            os.replace(backup_media, final_media)
+        elif not had_media:
+            final_media.unlink(missing_ok=True)
+        raise IngestError(
+            f"{video_id}: atomic replacement failed; previous dataset restored: {exc}"
+        ) from exc
 
 
 def _mapping_path(out_root: Path) -> Path:
