@@ -183,6 +183,20 @@ def test_feedback_endpoint_records_structured_session_feedback(client: TestClien
     assert data["record_count"] >= 1
 
 
+def test_feedback_endpoint_bounds_payload_size(client: TestClient):
+    response = client.post(
+        "/feedback",
+        json={
+            "session_id": "session-1",
+            "query_revision": 1,
+            "positive_ids": [f"F{i}" for i in range(501)],
+            "negative_ids": [],
+            "prior_result_ids": [],
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_ui_served_at_root(client: TestClient):
     res = client.get("/")
     assert res.status_code == 200
