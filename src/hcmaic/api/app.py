@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from hcmaic.contracts.models import CanonicalSubmission, SearchRequest, SearchResult
+from hcmaic.retrieval.feedback import FeedbackEvent
 from hcmaic.retrieval.service import (
     RetrievalService,
     UnknownFrameError,
@@ -80,6 +81,7 @@ def create_app(
         description="Local keyframe retrieval MVP (HCMAIC 2026, Bảng A).",
     )
     app.state.service = service
+    app.state.feedback_events = []
 
     @app.get("/health")
     def health() -> dict:
@@ -98,6 +100,7 @@ def create_app(
             for key, value in service.artifacts.index_manifest.items()
             if key != "dataset_root"
         }
+        config = public_manifest.get("config", {})
         return {
             "index_manifest": public_manifest,
             "dataset_manifest_hash": service.artifacts.dataset_manifest.get(
@@ -105,6 +108,15 @@ def create_app(
             ),
             "n_frames": len(service.artifacts.catalog),
             "video_ids": service.video_ids(),
+            "runtime": {
+                "embedding_provider": service.text_provider.name,
+                "embedding_version": service.text_provider.version,
+                "index_provider": public_manifest.get(
+                    "index_provider", service.index.name
+                ),
+                "fusion": config.get("fusion", {}).get("name", "single-stage"),
+                "reranker": config.get("reranker", {}).get("name", "identity"),
+            },
         }
 
     @app.post("/search", response_model=SearchResponse)
@@ -137,6 +149,7 @@ def create_app(
         try:
             record = service.get_frame(frame_id)
             neighbors = service.neighbors(frame_id, window=window)
+            shot_context = service.shot_context(frame_id)
         except UnknownFrameError as exc:
             raise HTTPException(
                 status_code=404,
@@ -152,6 +165,16 @@ def create_app(
                 }
                 for n in neighbors
             ],
+            "shot_context": {
+                name: [
+                    {
+                        **item.model_dump(),
+                        "image_url": f"/frames/{item.frame_id}/image",
+                    }
+                    for item in items
+                ]
+                for name, items in shot_context.items()
+            },
             "image_url": f"/frames/{frame_id}/image",
         }
 
@@ -204,6 +227,16 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail=f"Unknown frame_id {body.frame_id!r}"
             ) from exc
+
+    @app.post("/feedback")
+    def record_feedback(body: FeedbackEvent) -> dict:
+        app.state.feedback_events.append(body.model_dump())
+        return {
+            "status": "recorded",
+            "record_count": len(app.state.feedback_events),
+            "event": body.model_dump(),
+            "evidence_level": "SESSION_LOCAL",
+        }
 
     if UI_DIR.is_dir():
         app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")

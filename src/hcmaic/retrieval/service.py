@@ -133,6 +133,32 @@ class RetrievalService:
         start = max(0, pos - window)
         return frames[start : pos + window + 1]
 
+    def shot_context(self, frame_id: str) -> dict[str, list[FrameRecord]]:
+        record = self.get_frame(frame_id)
+        if not record.shot_id:
+            return {"same_shot": [], "previous_shot": [], "next_shot": []}
+        frames = self.timeline(record.video_id)
+        shot_ids: list[str] = []
+        for frame in frames:
+            if frame.shot_id and frame.shot_id not in shot_ids:
+                shot_ids.append(frame.shot_id)
+        position = shot_ids.index(record.shot_id)
+        previous = shot_ids[position - 1] if position > 0 else None
+        following = shot_ids[position + 1] if position + 1 < len(shot_ids) else None
+        return {
+            "same_shot": [
+                frame
+                for frame in frames
+                if frame.shot_id == record.shot_id and frame.frame_id != frame_id
+            ],
+            "previous_shot": [
+                frame for frame in frames if previous and frame.shot_id == previous
+            ],
+            "next_shot": [
+                frame for frame in frames if following and frame.shot_id == following
+            ],
+        }
+
     # -- search ----------------------------------------------------------
 
     def _video_filter_mask(self, video_ids: list[str]) -> np.ndarray:

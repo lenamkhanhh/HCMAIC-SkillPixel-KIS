@@ -6,6 +6,9 @@ const MAX_HISTORY = 20;
 
 let lastQueryId = null;
 let selectedFrameId = null;
+let lastResultIds = [];
+let queryRevision = 0;
+const sessionId = "ui-" + Math.random().toString(36).slice(2);
 
 function setStatus(text, isError = false, spinning = false) {
   const el = $("status");
@@ -33,6 +36,7 @@ async function loadSystemInfo() {
     $("sysinfo").textContent =
       `${health.index_size} frames · ${health.n_videos} videos · ` +
       `index ${health.index_version} · provider ${health.embedding_provider}`;
+    $("sysinfo").textContent += ` | fusion ${info.runtime.fusion}`;
     const select = $("videoFilter");
     for (const vid of info.video_ids) {
       const opt = document.createElement("option");
@@ -69,6 +73,8 @@ async function runSearch(text) {
       body: JSON.stringify(body),
     });
     lastQueryId = data.query_id;
+    lastResultIds = data.results.map((result) => result.frame_id);
+    queryRevision += 1;
     pushHistory(query);
     renderResults(data);
     setStatus(
@@ -95,6 +101,12 @@ function renderResults(data) {
         <b>${r.video_id}</b> · ${r.frame_id.split(":")[1]}<br>
         <span class="muted">${(r.timestamp_ms / 1000).toFixed(2)}s · frame ${r.frame_idx}</span>
       </div>`;
+    const breakdown = document.createElement("div");
+    breakdown.className = "muted";
+    breakdown.textContent = Object.entries(r.signal_scores)
+      .map(([name, score]) => `${name}:${Number(score).toFixed(3)}`)
+      .join(" | ");
+    card.querySelector(".meta").appendChild(breakdown);
     card.addEventListener("click", () => openDetail(r.frame_id));
     grid.appendChild(card);
   }
@@ -120,6 +132,8 @@ async function openDetail(frameId) {
       keyframe: f.keyframe_id,
       "frame idx": f.frame_idx,
       time: (f.timestamp_ms / 1000).toFixed(3) + " s",
+      "timestamp source": f.metadata.timestamp_source || "legacy mapping",
+      shot: f.shot_id || "none",
       title: f.metadata.title || "—",
     };
     for (const [k, v] of Object.entries(rows)) {
@@ -152,6 +166,28 @@ async function openDetail(frameId) {
 function hideDetail() {
   $("detail").hidden = true;
   selectedFrameId = null;
+}
+
+async function recordFeedback(kind) {
+  if (!selectedFrameId) return;
+  const body = {
+    session_id: sessionId,
+    query_revision: Math.max(1, queryRevision),
+    positive_ids: kind === "positive" ? [selectedFrameId] : [],
+    negative_ids: kind === "negative" ? [selectedFrameId] : [],
+    prior_result_ids: lastResultIds,
+  };
+  try {
+    const data = await api("/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("feedbackStatus").textContent =
+      `${kind} recorded locally (#${data.record_count})`;
+  } catch (err) {
+    $("feedbackStatus").textContent = "Feedback failed: " + err.message;
+  }
 }
 
 /* ---------- submission preview ---------- */
@@ -210,6 +246,8 @@ $("searchBtn").addEventListener("click", () => runSearch());
 $("query").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
 $("closeDetail").addEventListener("click", hideDetail);
 $("previewBtn").addEventListener("click", previewSubmission);
+$("positiveBtn").addEventListener("click", () => recordFeedback("positive"));
+$("negativeBtn").addEventListener("click", () => recordFeedback("negative"));
 $("clearHistory").addEventListener("click", () => {
   localStorage.removeItem(HISTORY_KEY);
   renderHistory();
