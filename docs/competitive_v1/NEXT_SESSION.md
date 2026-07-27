@@ -98,9 +98,9 @@ Actual local synthetic ANN evidence:
 
 ```text
 vectors=1000, dimension=64, queries=20, top_k=20
-Recall@20=0.9925
-p95=0.493 ms
-index_bytes=400090
+Recall@20=1.0
+p95=0.125 ms
+index_bytes=527682
 evidence=SYNTHETIC_SCALE_VERIFIED
 ```
 
