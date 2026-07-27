@@ -1,0 +1,51 @@
+dataset_adapter:
+  name: btc-style
+  version: v1
+ingestion_backend:
+  name: opencv
+  version: "5.0"
+shot_detector:
+  name: uniform
+  version: fallback
+sampling_policy:
+  name: representative-plus-long-shot
+  version: v1
+  params:
+    interval_s: 2.0
+    max_frames_per_video: 500
+modality_extractors:
+  - name: visual
+    version: v1
+  - name: mock-ocr
+    version: fixture-only
+  - name: mock-asr
+    version: fixture-only
+  - name: mock-caption
+    version: fixture-only
+embedding_provider:
+  name: mock
+  version: mock-palette-v1
+  params:
+    device: cpu
+    batch_size: 16
+index_provider:
+  name: exact-numpy
+  version: v1
+fusion:
+  name: weighted-late-fusion
+  version: v1
+  params:
+    weights:
+      visual: 1.0
+      ocr: 0.4
+      asr: 0.3
+      caption: 0.5
+reranker:
+  name: identity
+  version: v1
+benchmark_inputs:
+  name: proxy-fixture
+  version: v1
+device: cpu
+batch_size: 16
+seed: 7

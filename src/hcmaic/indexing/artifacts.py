@@ -25,6 +25,7 @@ from typing import Any
 
 import numpy as np
 
+from hcmaic.config import CompetitiveFoundationConfig, ProviderSpec, artifact_provenance
 from hcmaic.contracts.models import FrameRecord
 from hcmaic.embedding.base import EmbeddingProvider
 from hcmaic.ingestion.catalog import CATALOG_NAME, load_catalog, write_catalog
@@ -81,6 +82,7 @@ def build_index_artifacts(
     provider: EmbeddingProvider,
     out_dir: Path,
     index_provider: str = "exact-numpy",
+    foundation_config: CompetitiveFoundationConfig | None = None,
 ) -> Path:
     """Embed the catalog and write the versioned artifact directory."""
     dataset_root = Path(dataset_root)
@@ -126,6 +128,30 @@ def build_index_artifacts(
         "code_version": _code_version(Path(__file__).resolve().parents[3]),
         "created_at": _dt.datetime.now(_dt.UTC).isoformat(),
     }
+    if foundation_config is None:
+        foundation_config = CompetitiveFoundationConfig(
+            dataset_adapter=ProviderSpec(name="local-fixture", version="v0"),
+            ingestion_backend=ProviderSpec(name="raw-video", version="milestone-1"),
+            shot_detector=ProviderSpec(name="uniform", version="fallback"),
+            embedding_provider=ProviderSpec(
+                name=provider.name,
+                version=provider.version,
+                params=(("dimension", provider.dimension),),
+            ),
+            index_provider=ProviderSpec(name=index_provider, version="v1"),
+            fusion=ProviderSpec(name="single-stage", version="v1"),
+            reranker=ProviderSpec(name="identity", version="v1"),
+            benchmark_inputs=ProviderSpec(name="fixture", version="sample"),
+            device="cpu",
+            batch_size=1,
+            seed=0,
+        )
+    index_manifest.update(
+        artifact_provenance(
+            foundation_config,
+            code_version=str(index_manifest["code_version"]),
+        )
+    )
     write_manifest(index_manifest, out_dir / INDEX_MANIFEST_NAME)
     return out_dir
 

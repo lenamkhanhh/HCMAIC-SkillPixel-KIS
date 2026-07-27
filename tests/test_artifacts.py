@@ -48,6 +48,9 @@ def test_index_manifest_contents(built_artifacts_dir: Path):
     assert manifest["dataset_manifest_hash"]
     assert manifest["created_at"]
     assert "index_version" in manifest
+    assert manifest["config"]["embedding_provider"]["name"] == "mock"
+    assert manifest["config_hash"]
+    assert manifest["code_version"]
 
 
 def test_load_round_trip(built_artifacts_dir: Path):

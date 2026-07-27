@@ -281,6 +281,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "uvicorn" },
 ]
 
@@ -316,6 +317,7 @@ requires-dist = [
     { name = "opencv-python-headless", marker = "extra == 'video'", specifier = ">=4.9" },
     { name = "pillow", specifier = ">=12.3,<13" },
     { name = "pydantic", specifier = ">=2.8,<3" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "torch", marker = "extra == 'clip'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'clip'", specifier = ">=4.44,<5" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
