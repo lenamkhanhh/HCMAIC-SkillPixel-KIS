@@ -52,7 +52,7 @@ def l2_normalize(matrix: np.ndarray) -> np.ndarray:
 
 
 def get_provider(name: str, **kwargs: Any) -> EmbeddingProvider:
-    """Instantiate a provider by registry key ("mock" or "clip")."""
+    """Instantiate a provider by registry key, with lazy optional adapters."""
     if name == "mock":
         from hcmaic.embedding.mock import DeterministicMockEmbeddingProvider
 
@@ -61,4 +61,6 @@ def get_provider(name: str, **kwargs: Any) -> EmbeddingProvider:
         from hcmaic.embedding.clip_real import RealClipEmbeddingProvider
 
         return RealClipEmbeddingProvider(**kwargs)
-    raise ValueError(f"Unknown embedding provider {name!r}; expected 'mock' or 'clip'.")
+    from hcmaic.embedding.registry import create_provider
+
+    return create_provider(name, **kwargs)

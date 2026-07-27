@@ -110,6 +110,16 @@ def _cmd_build_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_provider_doctor(args: argparse.Namespace) -> int:
+    from hcmaic.embedding.registry import provider_doctor
+
+    report = provider_doctor(
+        args.provider, device=args.device, revision=args.revision
+    )
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     from hcmaic.contracts.models import SearchRequest
     from hcmaic.retrieval.service import load_service
@@ -222,9 +232,26 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("build-index", help="Validate, embed, and write artifacts")
     p.add_argument("--input", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--provider", choices=["mock", "clip"], default="mock")
+    p.add_argument(
+        "--provider",
+        choices=["mock", "clip", "siglip2", "jina-clip-v2"],
+        default="mock",
+    )
     p.add_argument("--index", choices=["exact-numpy", "faiss"], default="exact-numpy")
     p.set_defaults(func=_cmd_build_index)
+
+    p = sub.add_parser(
+        "provider-doctor",
+        help="Report provider dependencies without downloading model weights",
+    )
+    p.add_argument(
+        "--provider",
+        choices=["mock", "clip", "siglip2", "jina-clip-v2"],
+        required=True,
+    )
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--revision")
+    p.set_defaults(func=_cmd_provider_doctor)
 
     p = sub.add_parser("search", help="Search an index from the command line")
     p.add_argument("--index", required=True)
