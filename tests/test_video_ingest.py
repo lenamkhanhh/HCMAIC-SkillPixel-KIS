@@ -185,6 +185,48 @@ def test_ingest_force_replaces_cleanly(color_video: Path, tmp_path: Path):
     assert len({(r["video_id"], r["n"]) for r in rows}) == len(rows)
 
 
+def test_failed_force_preserves_previous_dataset(
+    monkeypatch: pytest.MonkeyPatch, color_video: Path, tmp_path: Path
+):
+    out = tmp_path / "dataset"
+    first = ingest_video(color_video, out, interval_s=1.0)
+    mapping_before = (out / "keyframe_mapping.csv").read_bytes()
+    frames_before = {
+        p.name: p.read_bytes()
+        for p in (out / "keyframes" / first.info.video_id).glob("*.jpg")
+    }
+
+    def fail_extraction(*args, **kwargs):
+        raise IngestError("simulated decoder failure")
+
+    monkeypatch.setattr(vid, "_iter_candidates_opencv", fail_extraction)
+    monkeypatch.setattr(vid, "_iter_candidates_ffmpeg", fail_extraction)
+
+    with pytest.raises(IngestError, match="simulated decoder failure"):
+        ingest_video(color_video, out, interval_s=2.0, force=True)
+
+    assert (out / "keyframe_mapping.csv").read_bytes() == mapping_before
+    assert {
+        p.name: p.read_bytes()
+        for p in (out / "keyframes" / first.info.video_id).glob("*.jpg")
+    } == frames_before
+
+
+def test_parse_ffmpeg_showinfo_preserves_non_zero_pts():
+    stderr = """
+[Parsed_showinfo_1 @ 000001] n:   0 pts: 22500 pts_time:2.5 pos:0
+[Parsed_showinfo_1 @ 000001] n:   1 pts: 40500 pts_time:4.5 pos:123
+"""
+    assert vid._parse_ffmpeg_showinfo(stderr) == [2.5, 4.5]
+
+
+def test_parse_ffmpeg_showinfo_rejects_missing_or_invalid_pts():
+    with pytest.raises(IngestError, match="timestamp"):
+        vid._parse_ffmpeg_showinfo("[Parsed_showinfo_1] n:0 pts:NOPTS")
+    with pytest.raises(IngestError, match="negative"):
+        vid._parse_ffmpeg_showinfo("[Parsed_showinfo_1] n:0 pts_time:-0.25")
+
+
 def test_ingest_respects_max_frames(color_video: Path, tmp_path: Path):
     result = ingest_video(
         color_video, tmp_path / "dataset", interval_s=0.5, max_frames=3
