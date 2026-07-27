@@ -43,7 +43,7 @@ uv run hcmaic evaluate      --index artifacts/sample --queries data/sample/queri
 `serve` hosts the operator UI (query box, top-K grid, frame detail, video
 timeline, query history, canonical submission preview) plus the JSON API:
 `GET /health`, `GET /system/info`, `POST /search`, `GET /frames/{frame_id}`,
-`GET /videos/{video_id}/timeline`, `POST /submit/preview`.
+`GET /videos/{video_id}/timeline`, `POST /feedback`, `POST /submit/preview`.
 
 ## Raw video ingestion (Milestone 1)
 
@@ -94,7 +94,34 @@ uv run mypy src
 .\scripts\verify.ps1                   # full verification loop
 ```
 
+## Competitive Foundation v1
+
+The optional competitive foundation adds typed configuration/provenance,
+safe staged video replacement, shot/multimodal contracts, lazy provider
+diagnostics, deterministic fusion/feedback, FAISS HNSW engineering benchmarks
+and a frozen proxy benchmark harness:
+
+```powershell
+uv run hcmaic provider-doctor --provider siglip2
+uv run hcmaic scale-benchmark --vectors 1000 --dimension 64 --queries 20 --top-k 20
+uv run hcmaic benchmark --config configs/competitive_v1.yaml `
+  --out artifacts/benchmark/competitive-v1
+```
+
+These commands produce software/fixture/synthetic evidence only. They do not
+prove BTC retrieval quality. Start at
+[Competitive Foundation v1](COMPETITIVE_FOUNDATION_V1.md), use the
+[Windows runbook](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md), and make every
+future coding agent read
+[NEXT_SESSION](docs/competitive_v1/NEXT_SESSION.md) before editing.
+
 ## Documents
+
+- [COMPETITIVE_FOUNDATION_V1_PLAN.md](COMPETITIVE_FOUNDATION_V1_PLAN.md) —
+  seven-gate plan and acceptance criteria
+- [TEAM_TASK_BOARD.md](TEAM_TASK_BOARD.md) — role-based next work
+- [docs/competitive_v1/00_OVERVIEW.md](docs/competitive_v1/00_OVERVIEW.md) —
+  full competitive-v1 documentation index
 
 - [GOAL.md](GOAL.md) — mission definition of done
 - [UPSTREAM.md](UPSTREAM.md) — provenance, reuse, deviations
