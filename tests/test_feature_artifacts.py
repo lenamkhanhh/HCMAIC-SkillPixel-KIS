@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from hcmaic.features.artifacts import FeatureArtifactError, load_feature_records, write_feature_records
+from hcmaic.features.artifacts import (
+    FeatureArtifactError,
+    load_feature_records,
+    write_feature_records,
+)
 from hcmaic.features.base import FeatureContext
 from hcmaic.features.mock import MockOCRProvider
 
