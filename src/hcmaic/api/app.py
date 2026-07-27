@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -81,7 +82,7 @@ def create_app(
         description="Local keyframe retrieval MVP (HCMAIC 2026, Bảng A).",
     )
     app.state.service = service
-    app.state.feedback_events = []
+    app.state.feedback_events = deque(maxlen=1000)
 
     @app.get("/health")
     def health() -> dict:

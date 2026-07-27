@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
 from hcmaic.retrieval.candidates import FusedCandidate
 
+FeedbackId = Annotated[str, Field(min_length=1, max_length=256)]
+
 
 class FeedbackEvent(BaseModel):
-    session_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1, max_length=128)
     query_revision: int = Field(ge=1)
-    positive_ids: list[str] = Field(default_factory=list)
-    negative_ids: list[str] = Field(default_factory=list)
-    prior_result_ids: list[str] = Field(default_factory=list)
+    positive_ids: list[FeedbackId] = Field(default_factory=list, max_length=500)
+    negative_ids: list[FeedbackId] = Field(default_factory=list, max_length=500)
+    prior_result_ids: list[FeedbackId] = Field(default_factory=list, max_length=500)
 
 
 def apply_feedback(
