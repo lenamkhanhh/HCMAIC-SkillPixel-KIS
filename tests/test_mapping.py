@@ -40,6 +40,38 @@ def test_per_video_layout(tmp_path: Path):
     ]
 
 
+def test_extended_shot_mapping_columns_are_preserved(tmp_path: Path):
+    (tmp_path / "keyframe_mapping.csv").write_text(
+        (
+            "video_id,n,pts_time,fps,frame_idx,shot_id,frame_id,shot_start,"
+            "shot_end,width,height,timestamp_source,ingestion_provider,"
+            "sampling_policy\n"
+            "V1,1,2.5,25,62,V1:shot-001,V1:001,2.0,4.0,1920,1080,"
+            "exact_pts,ffmpeg,uniform-v1\n"
+        ),
+        encoding="utf-8",
+    )
+    row = load_mapping_rows(tmp_path)[0]
+    assert row.shot_id == "V1:shot-001"
+    assert row.frame_id == "V1:001"
+    assert row.shot_start == pytest.approx(2.0)
+    assert row.shot_end == pytest.approx(4.0)
+    assert row.timestamp_source == "exact_pts"
+    assert row.ingestion_provider == "ffmpeg"
+    assert row.sampling_policy == "uniform-v1"
+
+
+def test_legacy_mapping_gets_explicit_derived_defaults(tmp_path: Path):
+    (tmp_path / "keyframe_mapping.csv").write_text(
+        "video_id,n,pts_time,fps,frame_idx\nV1,1,2.5,25,62\n",
+        encoding="utf-8",
+    )
+    row = load_mapping_rows(tmp_path)[0]
+    assert row.shot_id is None
+    assert row.frame_id == "V1:001"
+    assert row.timestamp_source == "legacy_mapping"
+
+
 def test_missing_columns_is_actionable(tmp_path: Path):
     (tmp_path / "keyframe_mapping.csv").write_text(
         "video_id,n,frame_idx\nV1,1,25\n", encoding="utf-8"
