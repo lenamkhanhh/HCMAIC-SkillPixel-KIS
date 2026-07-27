@@ -80,6 +80,20 @@ def test_timestamp_beyond_duration(dataset_copy: Path):
     assert "100.0" in issue.message and "60" in issue.message
 
 
+def test_invalid_shot_range_is_rejected(dataset_copy: Path):
+    src = dataset_copy / "keyframes" / "L01_V001" / "001.jpg"
+    (dataset_copy / "keyframes" / "L01_V001" / "009.jpg").write_bytes(src.read_bytes())
+    mapping = dataset_copy / "keyframe_mapping.csv"
+    content = mapping.read_text(encoding="utf-8")
+    content += (
+        "L01_V001,9,10.0,25.0,250,shot-9,V1:009,12.0,11.0,64,48,"
+        "exact_pts,ffmpeg,uniform-1s\n"
+    )
+    mapping.write_text(content, encoding="utf-8")
+    report = validate_dataset(dataset_copy)
+    assert "invalid-shot-range" in _codes(report.errors)
+
+
 def test_unreadable_image(dataset_copy: Path):
     target = dataset_copy / "keyframes" / "L01_V002" / "001.jpg"
     target.write_bytes(b"this is not a jpeg")
