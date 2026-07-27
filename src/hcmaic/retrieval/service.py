@@ -33,7 +33,14 @@ def _make_index(name: str) -> SearchIndex:
         from hcmaic.indexing.faiss_index import FaissIndex
 
         return FaissIndex()
-    raise ValueError(f"Unknown index provider {name!r}; expected 'exact-numpy' or 'faiss'.")
+    if name == "faiss-hnsw":
+        from hcmaic.indexing.faiss_ann import FaissHNSWIndex
+
+        return FaissHNSWIndex()
+    raise ValueError(
+        f"Unknown index provider {name!r}; expected exact-numpy, faiss, "
+        "or faiss-hnsw."
+    )
 
 
 class RetrievalService:

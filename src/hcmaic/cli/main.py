@@ -120,6 +120,32 @@ def _cmd_provider_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scale_benchmark(args: argparse.Namespace) -> int:
+    from hcmaic.indexing.scale_benchmark import (
+        ScaleBenchmarkConfig,
+        run_scale_benchmark,
+    )
+
+    config = ScaleBenchmarkConfig(
+        vector_count=args.vectors,
+        dimension=args.dimension,
+        query_count=args.queries,
+        top_k=args.top_k,
+        seed=args.seed,
+        hnsw_m=args.hnsw_m,
+        ef_construction=args.ef_construction,
+        ef_search=args.ef_search,
+    )
+    report = run_scale_benchmark(config)
+    payload = json.dumps(report, indent=2, ensure_ascii=False)
+    if args.out:
+        path = Path(args.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload + "\n", encoding="utf-8")
+    print(payload)
+    return 0
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     from hcmaic.contracts.models import SearchRequest
     from hcmaic.retrieval.service import load_service
@@ -237,7 +263,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["mock", "clip", "siglip2", "jina-clip-v2"],
         default="mock",
     )
-    p.add_argument("--index", choices=["exact-numpy", "faiss"], default="exact-numpy")
+    p.add_argument(
+        "--index",
+        choices=["exact-numpy", "faiss", "faiss-hnsw"],
+        default="exact-numpy",
+    )
     p.set_defaults(func=_cmd_build_index)
 
     p = sub.add_parser(
@@ -253,6 +283,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--revision")
     p.set_defaults(func=_cmd_provider_doctor)
 
+    p = sub.add_parser(
+        "scale-benchmark",
+        help="Run a synthetic exact-versus-HNSW engineering benchmark",
+    )
+    p.add_argument("--vectors", type=int, default=10_000)
+    p.add_argument("--dimension", type=int, default=512)
+    p.add_argument("--queries", type=int, default=100)
+    p.add_argument("--top-k", type=int, default=100)
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--hnsw-m", type=int, default=32)
+    p.add_argument("--ef-construction", type=int, default=200)
+    p.add_argument("--ef-search", type=int, default=128)
+    p.add_argument("--out")
+    p.set_defaults(func=_cmd_scale_benchmark)
+
     p = sub.add_parser("search", help="Search an index from the command line")
     p.add_argument("--index", required=True)
     p.add_argument("--query", required=True)
@@ -260,7 +305,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--video-id", help="Restrict to comma-separated video ids")
     p.add_argument("--query-id", default="cli")
     p.add_argument("--data-root", help="Override dataset root for image paths")
-    p.add_argument("--index-provider", choices=["exact-numpy", "faiss"])
+    p.add_argument(
+        "--index-provider", choices=["exact-numpy", "faiss", "faiss-hnsw"]
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_search)
 
@@ -269,7 +316,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--data-root", help="Override dataset root for image paths")
-    p.add_argument("--index-provider", choices=["exact-numpy", "faiss"])
+    p.add_argument(
+        "--index-provider", choices=["exact-numpy", "faiss", "faiss-hnsw"]
+    )
     p.set_defaults(func=_cmd_serve)
 
     p = sub.add_parser("evaluate", help="Run the evaluator")
