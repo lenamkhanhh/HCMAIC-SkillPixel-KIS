@@ -46,6 +46,13 @@ reranker:
 benchmark_inputs:
   name: proxy-fixture
   version: v1
+  params:
+    dataset_root: ../data/sample
+    queries: ../data/sample/queries.jsonl
+    qrels: ../data/sample/qrels.jsonl
+    warmups: 1
+    repeats: 3
+    top_k: 100
 device: cpu
 batch_size: 16
 seed: 7

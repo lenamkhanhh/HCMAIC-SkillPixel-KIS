@@ -4,7 +4,7 @@ queries.jsonl lines: {"query_id": str, "text": str, "task_type"?: str}
 qrels.jsonl lines:   {"query_id": str, "relevant_frame_ids": [str, ...],
                       "relevant_video_ids"?: [str, ...]}
 
-Metrics: Recall@1/5/10 (fraction of queries with >=1 relevant frame in the
+Metrics: Recall@1/5/10/100 (fraction of queries with >=1 relevant frame in the
 cutoff), MRR (over frame relevance), p50/p95 search latency, invalid/missing
 counts. The report clearly labels the evaluation mode; deterministic-mock
 results validate plumbing only and never competition retrieval quality.
@@ -22,7 +22,7 @@ from typing import Any
 from hcmaic.contracts.models import SearchRequest
 from hcmaic.retrieval.service import RetrievalService
 
-CUTOFFS = (1, 5, 10)
+CUTOFFS = (1, 5, 10, 100)
 
 
 @dataclass

@@ -146,6 +146,16 @@ def _cmd_scale_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_benchmark(args: argparse.Namespace) -> int:
+    from hcmaic.benchmark.runner import run_benchmark
+
+    outputs = run_benchmark(Path(args.config), Path(args.out))
+    print("Benchmark complete (proxy/plumbing evidence unless real inputs are supplied).")
+    for name, path in outputs.items():
+        print(f"  {name}: {path}")
+    return 0
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     from hcmaic.contracts.models import SearchRequest
     from hcmaic.retrieval.service import load_service
@@ -297,6 +307,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ef-search", type=int, default=128)
     p.add_argument("--out")
     p.set_defaults(func=_cmd_scale_benchmark)
+
+    p = sub.add_parser(
+        "benchmark",
+        help="Run a frozen reproducible benchmark from a YAML config",
+    )
+    p.add_argument("--config", required=True)
+    p.add_argument("--out", default="artifacts/benchmark/competitive-v1")
+    p.set_defaults(func=_cmd_benchmark)
 
     p = sub.add_parser("search", help="Search an index from the command line")
     p.add_argument("--index", required=True)
