@@ -18,6 +18,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REQUIRED_COLUMNS = ("n", "pts_time", "fps", "frame_idx")
+OPTIONAL_COLUMNS = (
+    "shot_id",
+    "frame_id",
+    "shot_start",
+    "shot_end",
+    "width",
+    "height",
+    "timestamp_source",
+    "ingestion_provider",
+    "sampling_policy",
+)
 SINGLE_FILE_NAME = "keyframe_mapping.csv"
 PER_VIDEO_DIR = "map-keyframes"
 
@@ -34,6 +45,25 @@ class MappingRow:
     fps: float
     frame_idx: int
     source: str  # file the row came from, for error messages
+    shot_id: str | None = None
+    frame_id: str | None = None
+    shot_start: float | None = None
+    shot_end: float | None = None
+    width: int | None = None
+    height: int | None = None
+    timestamp_source: str = "legacy_mapping"
+    ingestion_provider: str | None = None
+    sampling_policy: str | None = None
+
+
+def _optional_float(raw: dict[str, str], key: str) -> float | None:
+    value = (raw.get(key) or "").strip()
+    return None if not value else float(value)
+
+
+def _optional_int(raw: dict[str, str], key: str) -> int | None:
+    value = (raw.get(key) or "").strip()
+    return None if not value else int(value)
 
 
 def _parse_rows(
@@ -62,6 +92,20 @@ def _parse_rows(
                         fps=float(str(raw["fps"]).strip()),
                         frame_idx=int(str(raw["frame_idx"]).strip()),
                         source=src,
+                        shot_id=(raw.get("shot_id") or "").strip() or None,
+                        frame_id=(raw.get("frame_id") or "").strip()
+                        or f"{vid}:{int(str(raw['n']).strip()):03d}",
+                        shot_start=_optional_float(raw, "shot_start"),
+                        shot_end=_optional_float(raw, "shot_end"),
+                        width=_optional_int(raw, "width"),
+                        height=_optional_int(raw, "height"),
+                        timestamp_source=(
+                            (raw.get("timestamp_source") or "").strip()
+                            or "legacy_mapping"
+                        ),
+                        ingestion_provider=(raw.get("ingestion_provider") or "").strip()
+                        or None,
+                        sampling_policy=(raw.get("sampling_policy") or "").strip() or None,
                     )
                 )
             except (TypeError, ValueError) as exc:

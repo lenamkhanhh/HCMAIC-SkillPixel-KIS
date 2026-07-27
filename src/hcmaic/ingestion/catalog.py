@@ -42,14 +42,30 @@ def build_catalog(root: Path) -> list[FrameRecord]:
         metadata = {k: info[k] for k in _METADATA_KEYS if k in info}
         if row.fps > 0:
             metadata["fps"] = row.fps
+        if row.width is not None:
+            metadata["width"] = row.width
+        if row.height is not None:
+            metadata["height"] = row.height
+        metadata["timestamp_source"] = row.timestamp_source
+        if row.ingestion_provider:
+            metadata["ingestion_provider"] = row.ingestion_provider
+        if row.sampling_policy:
+            metadata["sampling_policy"] = row.sampling_policy
         records.append(
             FrameRecord(
-                frame_id=make_frame_id(row.video_id, keyframe_id_for(row.n)),
+                frame_id=row.frame_id or make_frame_id(row.video_id, keyframe_id_for(row.n)),
                 video_id=row.video_id,
                 keyframe_id=keyframe_id_for(row.n),
                 frame_idx=row.frame_idx,
                 pts=row.pts_time,
                 timestamp_ms=round(row.pts_time * 1000),
+                shot_id=row.shot_id,
+                shot_start_ms=(
+                    round(row.shot_start * 1000) if row.shot_start is not None else None
+                ),
+                shot_end_ms=(
+                    round(row.shot_end * 1000) if row.shot_end is not None else None
+                ),
                 image_path=image.relative_to(root).as_posix(),
                 metadata=metadata,
             )

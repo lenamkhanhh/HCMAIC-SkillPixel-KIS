@@ -48,7 +48,22 @@ DEFAULT_MAX_FRAMES = 500
 DEDUP_THRESHOLD = 2.0
 _JPEG_QUALITY = 92
 
-MAPPING_COLUMNS = ["video_id", "n", "pts_time", "fps", "frame_idx", "width", "height"]
+MAPPING_COLUMNS = [
+    "video_id",
+    "n",
+    "pts_time",
+    "fps",
+    "frame_idx",
+    "shot_id",
+    "frame_id",
+    "shot_start",
+    "shot_end",
+    "width",
+    "height",
+    "timestamp_source",
+    "ingestion_provider",
+    "sampling_policy",
+]
 
 
 class IngestError(RuntimeError):
@@ -223,6 +238,7 @@ class _Candidate:
     pts_time: float
     frame_idx: int
     image: np.ndarray  # RGB uint8
+    timestamp_source: str
 
 
 def _iter_candidates_opencv(
@@ -259,6 +275,9 @@ def _iter_candidates_opencv(
                 pts_time=pts_s,
                 frame_idx=frame_idx,
                 image=cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB),
+                timestamp_source=(
+                    "best_effort_pts" if pts_ms > 0 or frame_idx == 0 else "cfr_fallback"
+                ),
             )
             emitted += 1
             next_sample += interval_s
@@ -312,6 +331,7 @@ def _iter_candidates_ffmpeg(
                 pts_time=pts_s,
                 frame_idx=int(round(pts_s * info.fps)),
                 image=image,
+                timestamp_source="exact_pts",
             )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -464,12 +484,18 @@ def _generate_video_outputs(
             {
                 "video_id": info.video_id,
                 "n": n,
-                # clamp into declared duration so validation always holds
-                "pts_time": round(min(pts, duration) if duration > 0 else pts, 3),
+                "pts_time": round(pts, 3),
                 "fps": round(info.fps, 6),
                 "frame_idx": cand.frame_idx,
+                "shot_id": None,
+                "frame_id": f"{info.video_id}:{n:03d}",
+                "shot_start": None,
+                "shot_end": None,
                 "width": info.width,
                 "height": info.height,
+                "timestamp_source": cand.timestamp_source,
+                "ingestion_provider": info.backend,
+                "sampling_policy": f"uniform-{interval_s:g}s",
             }
         )
 

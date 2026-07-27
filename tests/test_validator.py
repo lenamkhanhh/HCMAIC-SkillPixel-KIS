@@ -85,6 +85,14 @@ def test_invalid_shot_range_is_rejected(dataset_copy: Path):
     (dataset_copy / "keyframes" / "L01_V001" / "009.jpg").write_bytes(src.read_bytes())
     mapping = dataset_copy / "keyframe_mapping.csv"
     content = mapping.read_text(encoding="utf-8")
+    header, *rows = content.splitlines()
+    content = (
+        header
+        + ",shot_id,frame_id,shot_start,shot_end,width,height,"
+        "timestamp_source,ingestion_provider,sampling_policy\n"
+        + "\n".join(rows)
+        + "\n"
+    )
     content += (
         "L01_V001,9,10.0,25.0,250,shot-9,V1:009,12.0,11.0,64,48,"
         "exact_pts,ffmpeg,uniform-1s\n"

@@ -139,9 +139,10 @@ def test_ingest_writes_dataset_layout(color_video: Path, tmp_path: Path):
     with open(out / "keyframe_mapping.csv", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == result.n_kept
-    assert set(rows[0]) == {
+    assert set(rows[0]) >= {
         "video_id", "n", "pts_time", "fps", "frame_idx", "width", "height",
     }
+    assert rows[0]["timestamp_source"] in {"best_effort_pts", "exact_pts"}
     for row in rows:
         assert row["video_id"] == "demo_clip"
         assert 0.0 <= float(row["pts_time"]) <= info.duration_s

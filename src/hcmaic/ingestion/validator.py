@@ -165,6 +165,28 @@ def validate_dataset(root: Path, check_images: bool = True) -> ValidationReport:
                 )
             )
 
+        if row.shot_start is not None or row.shot_end is not None:
+            shot_valid = (
+                row.shot_start is not None
+                and row.shot_end is not None
+                and math.isfinite(row.shot_start)
+                and math.isfinite(row.shot_end)
+                and row.shot_start >= 0
+                and row.shot_end >= row.shot_start
+                and row.shot_start <= row.pts_time <= row.shot_end
+            )
+            if not shot_valid:
+                errors.append(
+                    _err(
+                        "invalid-shot-range",
+                        f"{row.source}: shot range "
+                        f"[{row.shot_start}, {row.shot_end}] is invalid for "
+                        f"pts_time={row.pts_time} ({frame_id}).",
+                        video_id=vid,
+                        frame_id=frame_id,
+                    )
+                )
+
         if vid not in durations:
             info = load_media_info(root, vid)
             length = info.get("length") if info else None
@@ -186,6 +208,20 @@ def validate_dataset(root: Path, check_images: bool = True) -> ValidationReport:
                     f"declared duration {duration}s of {vid} "
                     f"({MEDIA_INFO_DIR}/{vid}.json 'length'). Fix the mapping "
                     f"or the metadata.",
+                    video_id=vid,
+                    frame_id=frame_id,
+                )
+            )
+        if (
+            duration is not None
+            and row.shot_end is not None
+            and row.shot_end > duration
+        ):
+            errors.append(
+                _err(
+                    "invalid-shot-range",
+                    f"{row.source}: shot_end={row.shot_end}s exceeds "
+                    f"declared duration {duration}s of {vid}.",
                     video_id=vid,
                     frame_id=frame_id,
                 )
