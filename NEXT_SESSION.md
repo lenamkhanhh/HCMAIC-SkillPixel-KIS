@@ -1,6 +1,10 @@
-# Next Session Handoff
+# Handoff cho session tiếp theo
 
-The complete handoff is maintained at
-`docs/competitive_v1/NEXT_SESSION.md`. Read that file completely before
-editing. It contains the gate table, evidence boundary, resume commands,
-known blockers, and the single next action.
+Trước khi sửa code, đọc đầy đủ:
+
+1. `TRANG_THAI_HE_THONG.md`
+2. `docs/competitive_v1/NEXT_SESSION.md`
+3. `TEAM_TASK_BOARD.md`
+4. `docs/competitive_v1/07_KNOWN_GAPS_AND_RISKS.md`
+
+Không được gọi system là competition-ready khi các gate vẫn còn `PARTIAL`.

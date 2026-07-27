@@ -1,5 +1,8 @@
 # Architectural decisions
 
+> Đây là decision log lịch sử. Kiến trúc và trạng thái kết nối hiện tại bằng
+> tiếng Việt nằm tại `docs/competitive_v1/01_ARCHITECTURE.md`.
+
 Format: date — decision — reason — alternatives rejected.
 
 ## 2026-07-26 — D1: Move upstream runnables to `upstream_reference/`

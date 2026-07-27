@@ -1,37 +1,42 @@
-# 06 — Khi BTC phát dataset
+# 06 — Khi BTC phát hành dataset
 
-## 0–6 giờ: audit
+Không đổi model ngay. Làm theo thứ tự sau.
 
-- copy/read rules, licenses, schema and submission format;
-- hash archive, list file counts/extensions, videos, keyframes, audio, metadata;
-- measure durations/resolutions/FPS/VFR and corrupt/missing items;
-- inspect provided CLIP/object/caption features and dimensions;
-- create 20–50 hand-checked queries/qrels without looking at hidden test labels;
-- choose adapter path; do not edit baseline models yet.
+## 0–2 giờ: audit read-only
 
-## 6–24 giờ: vertical baseline
+- xác nhận nguồn tải và rule sử dụng;
+- tạo checksum/manifest;
+- thống kê số video, duration, resolution, FPS/VFR;
+- kiểm tra corrupt/missing file;
+- kiểm tra audio, subtitle, metadata và language;
+- xác nhận schema mapping và submission.
 
-Run one legal end-to-end slice: validate -> catalog -> control embedding -> exact
-index -> search -> API/UI -> dry-run submission export. Freeze this commit and
-its report before parallel model work.
+Không rename, transcode hoặc sửa dataset gốc.
 
-## 24–48 giờ: model/modality matrix
+## 2–4 giờ: adapter và validation
 
-Benchmark control CLIP, SigLIP2/Jina candidate, OCR, ASR and caption separately.
-Use paired queries, identical data/config and measure quality slices plus
-latency/resource cost. Reject channels that fail to add value.
+- tạo dataset adapter riêng;
+- map field BTC sang canonical contract;
+- chạy validator;
+- xuất report lỗi theo video;
+- kiểm tra timestamp bằng một sample có ground truth.
 
-## 48–72 giờ: freeze and assign
+## 4–6 giờ: freeze baseline
 
-Freeze baseline v1, choose index/fusion, lock schemas and assign five roles:
-data/ingestion, visual embeddings, text/audio modalities, retrieval/fusion and
-API/UI/evaluation. Only then add competitive tricks behind flags.
+- chọn 20–50 query hợp lệ, có nhiều loại difficulty;
+- tạo qrels và review chéo;
+- freeze hash của query/qrels/config/code;
+- chạy incumbent không thay đổi;
+- lưu per-query results và failure cases.
 
-## Decision paths
+Sau baseline mới được chạy model hoặc fusion experiment.
 
-- Raw video: run timestamp/shot pipeline; supplied keyframes: preserve mapping.
-- Audio present: test ASR; absent: disable ASR cleanly.
-- Supplied features: verify IDs/dimension/normalization/license before reuse.
-- Small vectors: exact index; large vectors: benchmark HNSW/IVF against exact.
-- Official submission schema: implement a separate adapter and dry run; never
-  upload from tests or without team-controlled authorization.
+## Điều kiện dừng
+
+Dừng và báo lead nếu:
+
+- rule cấm preprocessing/model/data đang định dùng;
+- timestamp/schema không map chắc chắn;
+- dataset có corruption đáng kể;
+- query/qrels chưa được review;
+- artifact không reproducible.

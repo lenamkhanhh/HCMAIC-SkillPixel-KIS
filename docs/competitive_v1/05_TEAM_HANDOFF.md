@@ -1,39 +1,40 @@
-# 05 — Team handoff
+# 05 — Handoff cho team 5 người
 
-## Current state
+## Cách chia role đề xuất
 
-The legacy visual path remains the mandatory control. New modules provide
-provider/modality/fusion/ANN/benchmark contracts, but optional real models have
-not been benchmarked on BTC data.
+| Thành viên | Role chính | Phạm vi |
+|---|---|---|
+| TV1 | Data/ingestion | dataset audit, timestamp, shot, mapping |
+| TV2 | Visual ML | CLIP/SigLIP2/Jina, embedding benchmark |
+| TV3 | Multimodal ML | OCR, ASR, caption, feature artifact |
+| TV4 | Retrieval/backend | vector index, fusion, temporal, reranker, API |
+| TV5 | Evaluation/UI/QA | query/qrels, metric, failure slices, UI, mock contest |
 
-## Add an adapter
+Lead giữ config chuẩn, acceptance gate và quyền quyết định `keep/reject`.
 
-1. Add a dataset adapter under `ingestion/` that emits canonical mapping rows.
-2. Preserve original timestamps and evidence source.
-3. Add malformed, legacy and path-safety tests.
-4. Run validate -> catalog -> index -> search E2E.
+## Quy trình làm việc
 
-## Add a provider or modality
+1. Pull branch mới nhất.
+2. Đọc `TRANG_THAI_HE_THONG.md` và task ID được giao.
+3. Tạo branch riêng cho một task.
+4. Viết failing test hoặc frozen benchmark trước.
+5. Implement thay đổi nhỏ nhất.
+6. Chạy narrow test rồi full verification.
+7. Ghi experiment và evidence level.
+8. Mở PR, yêu cầu một thành viên khác review.
 
-1. Register model/revision and dependency checks without import-time loading.
-2. Implement shared image/text preprocessing and discover dimension.
-3. Emit `FeatureRecord` and hash-addressed artifacts.
-4. Build only that modality index; visual must survive its failure.
-5. Benchmark a paired control and label real versus fixture evidence.
+## Contract khi merge
 
-## Add an index/reranker
+PR phải ghi:
 
-Exact search is the oracle. Record parameters and measure Recall@K, latency and
-memory. A reranker receives top-N and returns top-K; it must have timeout and
-passthrough fallback before use in the operator path.
+- task ID và hypothesis;
+- file đã thay đổi;
+- command đã chạy;
+- metric before/after;
+- evidence level;
+- blocker hoặc phần chưa verify;
+- rollback/fallback;
+- ảnh hưởng tới artifact/config hash.
 
-## PR expectations
-
-- one task ID and one hypothesis;
-- tests show RED then GREEN;
-- no model weights/raw/private data/generated indexes in Git;
-- exact commands and metrics in the PR;
-- reviewer checks contracts, drift gates, latency and fallback;
-- no fixture score presented as competition quality.
-
-See `TEAM_TASK_BOARD.md` for role-based work without invented member names.
+Không merge model/fusion trick nếu chỉ có screenshot hoặc một điểm portal không
+có control.

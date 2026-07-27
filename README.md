@@ -1,134 +1,157 @@
-# HCMAIC keyframe-search MVP
+# HCMAIC 2026 — hệ thống tìm kiếm keyframe
 
-Local, reproducible keyframe text-search system for HCMAIC 2026 (Bảng A).
-Fork of [SoftSignalsRetrievalSystems-AIC2025](https://github.com/hhlearntocode/SoftSignalsRetrievalSystems-AIC2025)
-(MIT, pinned commit in [UPSTREAM.md](UPSTREAM.md)), refactored into a tested,
-self-contained package.
+Đây là hệ thống tìm kiếm khoảnh khắc trong video dành cho HCMAIC 2026 Bảng A.
+Project được phát triển từ
+[SoftSignalsRetrievalSystems-AIC2025](https://github.com/hhlearntocode/SoftSignalsRetrievalSystems-AIC2025)
+theo giấy phép MIT; commit gốc và phần thay đổi được ghi tại
+[UPSTREAM.md](UPSTREAM.md).
 
 ```text
-keyframes + mapping CSV + optional metadata
-  -> validate -> catalog -> embeddings -> index
-  -> CLI / FastAPI / operator UI -> submission preview -> evaluator
+keyframe + mapping CSV + metadata
+  -> validate -> catalog -> embedding -> vector index
+  -> CLI / FastAPI / giao diện tìm kiếm
+  -> submission preview -> evaluator
 ```
 
-Everything below runs offline on CPU with the committed fixture dataset —
-no network, GPU, FFmpeg, model weights, or private data required.
+Đường chạy mặc định hoạt động offline trên CPU với fixture có sẵn. Không cần
+network, GPU, FFmpeg, model weights hoặc dữ liệu riêng tư để chạy test.
 
-## Bootstrap (Windows, uv)
+## Trạng thái hiện tại
+
+- Code foundation chạy ổn: `184 passed`, coverage `90%`, Ruff và Mypy đều pass.
+- Pipeline fixture từ validate đến search/evaluate chạy end-to-end.
+- API/UI đã được browser E2E cho search, timeline, feedback và submission preview.
+- Benchmark harness có hash của config, dataset, query, qrels và code commit.
+- Chưa có dataset BTC chính thức.
+- SigLIP2, Jina CLIP v2, OCR, ASR và caption thật chưa được chạy.
+- Production retrieval hiện vẫn là visual-first; multimodal fusion mới có
+  contract và test riêng.
+
+Đọc [TRANG_THAI_HE_THONG.md](TRANG_THAI_HE_THONG.md) để xem report hiện tại và
+[TEAM_TASK_BOARD.md](TEAM_TASK_BOARD.md) để nhận task.
+
+## Cài đặt trên Windows
+
+Yêu cầu: PowerShell, Git và `uv`.
 
 ```powershell
-cd system
+cd D:\Code\Code\AIO\Code\HCMAIC\system
 uv python install 3.11
-uv sync                      # core + dev (test) dependencies
+uv sync --locked --extra faiss --extra video
 ```
 
-Optional extras (not needed for any test):
+Chỉ thêm `--extra clip` khi thực sự cần chạy model CLIP:
 
 ```powershell
-uv sync --extra clip         # real CLIP ViT-B/32 provider (torch, transformers)
-uv sync --extra faiss        # FAISS index provider (faiss-cpu)
+uv sync --locked --extra clip --extra faiss --extra video
 ```
 
-## Quick start on the fixture
+## Chạy nhanh bằng fixture
 
 ```powershell
 uv run hcmaic validate-data --input data/sample
-uv run hcmaic build-index   --input data/sample --output artifacts/sample
-uv run hcmaic search        --index artifacts/sample --query "red bus on the street" --top-k 5
-uv run hcmaic serve         --index artifacts/sample --port 8000
-# then open http://127.0.0.1:8000/
-uv run hcmaic evaluate      --index artifacts/sample --queries data/sample/queries.jsonl --qrels data/sample/qrels.jsonl
+uv run hcmaic build-index --input data/sample --output artifacts/sample
+uv run hcmaic search --index artifacts/sample `
+  --query "a solid red keyframe" --top-k 5
+uv run hcmaic serve --index artifacts/sample --port 8000
 ```
 
-`serve` hosts the operator UI (query box, top-K grid, frame detail, video
-timeline, query history, canonical submission preview) plus the JSON API:
-`GET /health`, `GET /system/info`, `POST /search`, `GET /frames/{frame_id}`,
-`GET /videos/{video_id}/timeline`, `POST /feedback`, `POST /submit/preview`.
+Sau đó mở `http://127.0.0.1:8000/`.
 
-## Raw video ingestion (Milestone 1)
-
-Turn raw videos (MP4/MKV/AVI/MOV) into a searchable dataset:
+Chạy evaluator:
 
 ```powershell
-uv sync --extra video      # OpenCV fallback backend (skip if FFmpeg is on PATH)
-uv run hcmaic ingest-video --input <video-file-or-dir> --output data/myset --interval 2.0
-uv run hcmaic validate-data --input data/myset
-uv run hcmaic build-index  --input data/myset --output artifacts/myset
-uv run hcmaic search       --index artifacts/myset --query "..." --top-k 10
+uv run hcmaic evaluate `
+  --index artifacts/sample `
+  --queries data/sample/queries.jsonl `
+  --qrels data/sample/qrels.jsonl
 ```
 
-Backends: FFmpeg CLI when `ffmpeg`+`ffprobe` are on PATH, otherwise the
-pure-pip OpenCV wheel. Uniform time sampling + near-duplicate removal;
-per-video results, warnings, and failures land in
-`<output>/ingest_report.json`. Re-ingesting an existing video requires
-`--force`.
+Các endpoint chính:
 
-## Real (BTC-style) data
+- `GET /health`
+- `GET /system/info`
+- `POST /search`
+- `GET /frames/{frame_id}`
+- `GET /videos/{video_id}/timeline`
+- `POST /feedback`
+- `POST /submit/preview`
 
-Point `--input` at a directory with the BTC conventions:
+## Ingest video
+
+```powershell
+uv run hcmaic ingest-video `
+  --input <video-hoac-folder> `
+  --output data/myset `
+  --interval 2.0
+
+uv run hcmaic validate-data --input data/myset
+uv run hcmaic build-index --input data/myset --output artifacts/myset
+```
+
+Nếu máy có cả `ffmpeg` và `ffprobe`, system ưu tiên FFmpeg. Nếu không có,
+system dùng OpenCV. Kết quả, warning và lỗi từng video được ghi vào
+`<output>/ingest_report.json`.
+
+Muốn ingest lại video đã tồn tại phải dùng `--force`. Dữ liệu mới được tạo và
+validate trong staging trước khi thay dữ liệu cũ.
+
+## Cấu trúc dataset tương thích BTC
 
 ```text
 <dataset>/
 ├── keyframes/<video_id>/<nnn>.jpg
-├── keyframe_mapping.csv        # video_id,n,pts_time,fps,frame_idx  (or per-video map-keyframes/<video_id>.csv)
-└── media-info/<video_id>.json  # optional YouTube-style metadata
+├── keyframe_mapping.csv
+└── media-info/<video_id>.json
 ```
 
-Build with the real CLIP provider once `--extra clip` is installed:
+System cũng đọc được dạng mapping tách riêng:
+`map-keyframes/<video_id>.csv`.
 
-```powershell
-uv run hcmaic build-index --input <dataset> --output artifacts/real --provider clip
-```
-
-The first clip run downloads `openai/clip-vit-base-patch32` (~600 MB) from
-Hugging Face. CPU works; CUDA is used automatically when available (batch
-size is capped for 4 GB VRAM).
-
-## Tests and verification
-
-```powershell
-uv run pytest                          # full offline suite
-uv run pytest --cov=src/hcmaic         # with coverage
-uv run ruff check src tests
-uv run mypy src
-.\scripts\verify.ps1                   # full verification loop
-```
-
-## Competitive Foundation v1
-
-The optional competitive foundation adds typed configuration/provenance,
-safe staged video replacement, shot/multimodal contracts, lazy provider
-diagnostics, deterministic fusion/feedback, FAISS HNSW engineering benchmarks
-and a frozen proxy benchmark harness:
+## Benchmark
 
 ```powershell
 uv run hcmaic provider-doctor --provider siglip2
-uv run hcmaic scale-benchmark --vectors 1000 --dimension 64 --queries 20 --top-k 20
-uv run hcmaic benchmark --config configs/competitive_v1.yaml `
+
+uv run hcmaic scale-benchmark `
+  --vectors 1000 --dimension 64 --queries 20 --top-k 20
+
+uv run hcmaic benchmark `
+  --config configs/competitive_v1.yaml `
   --out artifacts/benchmark/competitive-v1
 ```
 
-These commands produce software/fixture/synthetic evidence only. They do not
-prove BTC retrieval quality. Start at
-[Competitive Foundation v1](COMPETITIVE_FOUNDATION_V1.md), use the
-[Windows runbook](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md), and make every
-future coding agent read
-[NEXT_SESSION](docs/competitive_v1/NEXT_SESSION.md) before editing.
+Kết quả fixture hoặc synthetic chỉ chứng minh pipeline chạy đúng. Không được
+dùng chúng để kết luận chất lượng thi thật.
 
-## Documents
+## Kiểm tra toàn bộ
 
-- [COMPETITIVE_FOUNDATION_V1_PLAN.md](COMPETITIVE_FOUNDATION_V1_PLAN.md) —
-  seven-gate plan and acceptance criteria
-- [TEAM_TASK_BOARD.md](TEAM_TASK_BOARD.md) — role-based next work
-- [docs/competitive_v1/00_OVERVIEW.md](docs/competitive_v1/00_OVERVIEW.md) —
-  full competitive-v1 documentation index
+```powershell
+uv run pytest
+uv run pytest --cov=src/hcmaic
+uv run ruff check src tests scripts
+uv run mypy src
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+uv pip check
+git diff --check
+```
 
-- [GOAL.md](GOAL.md) — mission definition of done
-- [UPSTREAM.md](UPSTREAM.md) — provenance, reuse, deviations
-- [DECISIONS.md](DECISIONS.md) — architecture decisions
-- [PROGRESS.md](PROGRESS.md) — command-level log
-- [VERIFICATION_REPORT.md](VERIFICATION_REPORT.md) — latest gate results
-- [FINAL_HANDOFF.md](FINAL_HANDOFF.md) — recovery + next tickets per role
+`uv pip check` trên environment hiện tại đang báo hai metadata
+`charset-normalizer` cùng tồn tại. Xem hướng xử lý tại
+[runbook](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md).
 
-The fixture proves plumbing only. It says nothing about competition
-retrieval quality — benchmark on real BTC data before drawing conclusions.
+## Tài liệu dành cho team
+
+Đọc theo thứ tự:
+
+1. [TRANG_THAI_HE_THONG.md](TRANG_THAI_HE_THONG.md)
+2. [TEAM_TASK_BOARD.md](TEAM_TASK_BOARD.md)
+3. [Tổng quan kiến trúc](docs/competitive_v1/00_OVERVIEW.md)
+4. [Hướng dẫn cài đặt và vận hành](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md)
+5. [Handoff cho 5 thành viên](docs/competitive_v1/05_TEAM_HANDOFF.md)
+6. [Khi BTC phát hành dataset](docs/competitive_v1/06_WHEN_BTC_DATASET_ARRIVES.md)
+7. [Rủi ro và phần còn thiếu](docs/competitive_v1/07_KNOWN_GAPS_AND_RISKS.md)
+
+Các file `PROGRESS.md`, `OVERNIGHT_REPORT.md`, `FINAL_HANDOFF.md` và
+`VERIFICATION_REPORT.md` là lịch sử của các milestone trước. Trạng thái mới
+nhất luôn nằm trong `TRANG_THAI_HE_THONG.md`.

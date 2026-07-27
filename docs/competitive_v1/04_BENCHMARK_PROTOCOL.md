@@ -1,38 +1,23 @@
 # 04 — Benchmark protocol
 
-## Freeze before running
+## Mục tiêu
 
-Freeze dataset manifest, queries, qrels, YAML config, seed, provider/revision,
-index/fusion/reranker settings, code commit, warmups and repeats. A run is not
-comparable if one of these changes without a new experiment ID.
+Mỗi benchmark phải trả lời một hypothesis rõ ràng và có thể rerun. Không thay
+nhiều primary factor trong cùng một experiment.
 
-## Metrics
+## Input bắt buộc phải freeze
 
-- Recall@1/5/10/100 and Mean Reciprocal Rank (MRR);
-- timestamp error when temporal ground truth exists;
-- p50/p95 latency, indexing time and invalid/missing results;
-- exact-versus-Approximate Nearest Neighbor (ANN) Recall@K;
-- query slices: visual, OCR, ASR, action/temporal, Vietnamese and mixed.
+- dataset manifest/hash;
+- query set và qrels hash;
+- config hash;
+- code commit SHA;
+- provider/model revision;
+- preprocessing version;
+- index type/parameters;
+- device, batch size, seed;
+- warmup và repeat policy.
 
-Current fixture has no trusted slice labels or temporal error ground truth, so
-those fields are explicitly unavailable/unsliced.
-
-## Repeats and ablations
-
-- warm cache before timed repeats;
-- at least three repeats for local comparisons;
-- change one factor per experiment;
-- compare each ANN index to Exact NumPy/FAISS FlatIP;
-- report quality, latency and slice regressions together;
-- never tune repeatedly on a held-out final test.
-
-## Evidence and leakage
-
-Proxy fixture results validate plumbing only. Synthetic vector results validate
-index engineering only. Neither is a BTC score. Do not use private test labels,
-portal feedback or future information as query-time features.
-
-Required reports:
+## Output bắt buộc
 
 ```text
 benchmark_summary.json
@@ -40,3 +25,26 @@ per_query_results.jsonl
 run_manifest.json
 failure_cases.md
 ```
+
+## Metric tối thiểu
+
+- Recall@1/5/10/100;
+- MRR;
+- latency p50/p95;
+- empty result và missing qrels count;
+- per-query result;
+- slice metric khi có data thật;
+- ANN Recall@K khi dùng approximate index.
+
+## Quy tắc quyết định
+
+Chỉ `keep` một thay đổi khi:
+
+1. chạy paired với incumbent trên cùng frozen input;
+2. metric tổng hoặc slice mục tiêu tăng;
+3. không gây regression nghiêm trọng ở slice khác;
+4. latency/memory nằm trong budget;
+5. có fallback và regression test.
+
+Nếu evidence chỉ là fixture hoặc synthetic thì ghi đúng label, không suy diễn
+ra chất lượng thi.

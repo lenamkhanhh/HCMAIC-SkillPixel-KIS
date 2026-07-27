@@ -1,5 +1,9 @@
 # HCMAIC 2026 — Competitive Foundation v1 Mission
 
+> **Lưu ý cho team:** Đây là đặc tả kỹ thuật lịch sử được giữ nguyên để audit.
+> Hướng dẫn vận hành và report hiện tại bằng tiếng Việt nằm tại `README.md`,
+> `TRANG_THAI_HE_THONG.md` và `docs/competitive_v1/NEXT_SESSION.md`.
+
 > **Instruction for Claude/coding agents:** Read this file completely before
 > changing code. First inspect the real repository and write the implementation
 > plan. Then immediately self-review that plan and implement it phase by phase.
@@ -790,4 +794,3 @@ The final report must include:
 
 Do not report “Competitive Foundation v1 complete” merely because interfaces or
 documentation exist. Completion requires the gate evidence defined above.
-

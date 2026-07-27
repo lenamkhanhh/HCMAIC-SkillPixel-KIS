@@ -1,5 +1,8 @@
 # Milestone 1 — Raw video → keyframe → mapping → validation → embedding → retrieval
 
+> Đây là implementation report của milestone cũ. Runbook hiện tại bằng tiếng
+> Việt nằm tại `docs/competitive_v1/03_SETUP_AND_RUNBOOK.md`.
+
 Date: 2026-07-27. Status: **implemented and verified on local fixtures**
 (synthetic videos; not verified on BTC-scale real data).
 

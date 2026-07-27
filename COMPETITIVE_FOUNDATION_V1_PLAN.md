@@ -1,5 +1,9 @@
 # Competitive Foundation v1 Plan
 
+> **Lưu ý cho team:** Đây là implementation plan lịch sử. Plan tiếp tục bằng
+> tiếng Việt nằm tại `docs/competitive_v1/PLAN.md`; trạng thái mới nhất nằm tại
+> `TRANG_THAI_HE_THONG.md`.
+
 Date: 2026-07-27
 
 This plan is based on the current `system/` tree only.

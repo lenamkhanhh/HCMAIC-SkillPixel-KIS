@@ -1,33 +1,38 @@
 # HCMAIC Competitive Foundation v1
 
-Competitive Foundation v1 is a modular, benchmarkable extension of the
-existing visual keyframe-search MVP. It does not claim competition readiness.
+Competitive Foundation v1 là nền tảng có module, test và benchmark harness để
+team tiếp tục phát triển hệ thống video retrieval. Phiên bản này chưa được xem
+là competition-ready.
 
-## Delivered foundation
+## Những phần đã có
 
-- typed YAML configuration and hashed artifact provenance;
-- staged/validated raw-video replacement and decoder-derived FFmpeg timestamps;
-- legacy-compatible extended frame/shot/timestamp mapping;
-- deterministic shot/sampling contracts and explicit heavy-detector slots;
-- lazy embedding registry with mock, CLIP control, SigLIP2 and Jina CLIP v2 slots;
-- canonical multimodal feature records plus mock OCR/ASR/caption providers;
-- Reciprocal Rank Fusion (RRF), weighted late fusion, temporal expansion,
-  passthrough reranker and session-feedback contracts;
-- optional FAISS HNSW with exact-versus-ANN synthetic benchmarking;
-- reproducible proxy benchmark reports with config/data/query/qrels/code hashes;
-- API/UI surfaces for runtime identity, shot context, evidence scores and local
-  feedback.
+- Typed YAML config và artifact provenance có hash.
+- Ingest video bằng staging, validate trước khi replace và có rollback test.
+- Lưu decoder timestamp, `timestamp_source`, shot và sampling provenance.
+- Mapping mới nhưng vẫn tương thích dataset cũ.
+- Shot detector/sampler contract với deterministic fallback.
+- Lazy embedding registry cho mock, CLIP, SigLIP2 và Jina CLIP v2.
+- Feature contract cho visual, OCR, ASR, caption và metadata.
+- RRF, weighted late fusion, temporal expansion và reranker interface.
+- Optional FAISS HNSW cùng exact-versus-ANN synthetic benchmark.
+- Frozen benchmark config và report theo từng query.
+- API/UI hiển thị runtime, score, shot context, feedback và submission preview.
 
-## Evidence boundary
+## Mức bằng chứng
 
-| Evidence | Current meaning |
+| Nhãn | Ý nghĩa |
 |---|---|
-| `VERIFIED` | Executed locally on this checkout |
-| `FIXTURE_VERIFIED` | Executed only on deterministic synthetic fixture data |
-| `SYNTHETIC_SCALE_VERIFIED` | Executed on generated random vectors |
-| `INTERFACE_ONLY` | Contract/fake/diagnostic exists; real backend not run |
-| `BLOCKED` | Requires BTC data, official schema, hardware, dependency or weights |
+| `VERIFIED` | Đã chạy trực tiếp trên checkout hiện tại |
+| `FIXTURE_VERIFIED` | Chỉ chạy bằng fixture deterministic |
+| `SYNTHETIC_SCALE_VERIFIED` | Chạy trên vector synthetic |
+| `INTERFACE_ONLY` | Chỉ có contract/code; backend hoặc model thật chưa chạy |
+| `BLOCKED` | Thiếu dataset, schema, hardware, dependency hoặc weights |
 
-Start with [the overview](docs/competitive_v1/00_OVERVIEW.md), then follow the
-[setup runbook](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md). Coding agents
-must read [NEXT_SESSION.md](docs/competitive_v1/NEXT_SESSION.md) first.
+Không được nâng mức bằng chứng dựa trên source inspection hoặc mock.
+
+Tài liệu bắt đầu:
+
+- [Report trạng thái](TRANG_THAI_HE_THONG.md)
+- [Tổng quan](docs/competitive_v1/00_OVERVIEW.md)
+- [Runbook](docs/competitive_v1/03_SETUP_AND_RUNBOOK.md)
+- [Handoff session tiếp theo](docs/competitive_v1/NEXT_SESSION.md)

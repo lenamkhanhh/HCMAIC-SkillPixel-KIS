@@ -1,5 +1,8 @@
 # Mission goal
 
+> Tài liệu mục tiêu lịch sử. Team dùng `TRANG_THAI_HE_THONG.md` và
+> `TEAM_TASK_BOARD.md` để xem mục tiêu/trạng thái hiện tại bằng tiếng Việt.
+
 Fork the pinned SoftSignals AIC2025 system and turn it into a complete,
 reproducible, local HCMAIC keyframe-search MVP that a five-person team can
 run, test, extend, and benchmark on this Windows laptop (Python 3.11 via uv,

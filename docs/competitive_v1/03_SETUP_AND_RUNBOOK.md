@@ -1,6 +1,6 @@
-# 03 — Setup and runbook (Windows PowerShell)
+# 03 — Hướng dẫn cài đặt và vận hành
 
-## Fresh environment
+## Tạo environment
 
 ```powershell
 cd D:\Code\Code\AIO\Code\HCMAIC\system
@@ -8,15 +8,20 @@ uv python install 3.11
 uv sync --locked --extra faiss --extra video
 ```
 
-Add `--extra clip` only when a real CLIP smoke is intended. Optional provider
-doctor does not fetch weights:
+Chỉ thêm `--extra clip` khi cần chạy model thật:
+
+```powershell
+uv sync --locked --extra clip --extra faiss --extra video
+```
+
+Kiểm tra provider mà không tải weights:
 
 ```powershell
 uv run hcmaic provider-doctor --provider siglip2
 uv run hcmaic provider-doctor --provider jina-clip-v2
 ```
 
-## Fixture and standard path
+## Chạy fixture
 
 ```powershell
 uv run python scripts/make_fixture.py
@@ -26,28 +31,34 @@ uv run hcmaic search --index artifacts/sample --query "a red bus" --top-k 10
 uv run hcmaic serve --index artifacts/sample --port 8000
 ```
 
-## Raw video
+Mở `http://127.0.0.1:8000/`.
+
+## Ingest raw video
 
 ```powershell
-uv run hcmaic ingest-video --input <video-or-dir> --output data/myset --interval 2
+uv run hcmaic ingest-video `
+  --input <video-hoac-folder> `
+  --output data/myset `
+  --interval 2
+
 uv run hcmaic validate-data --input data/myset
 ```
 
-`--force` generates and validates staging output before replacing live files.
-FFmpeg is preferred when both FFmpeg and ffprobe exist; otherwise OpenCV is
-used. This machine currently exercises OpenCV.
+`--force` tạo và validate staging output trước khi replace live files. System ưu
+tiên FFmpeg khi có cả `ffmpeg` và `ffprobe`; nếu không thì dùng OpenCV.
 
-## Benchmarks
+## Benchmark
 
 ```powershell
-uv run hcmaic benchmark --config configs/competitive_v1.yaml `
+uv run hcmaic benchmark `
+  --config configs/competitive_v1.yaml `
   --out artifacts/benchmark/competitive-v1
 
-uv run hcmaic scale-benchmark --vectors 10000 --dimension 512 `
-  --queries 100 --top-k 100 --out artifacts/benchmark/scale.json
+uv run hcmaic scale-benchmark `
+  --vectors 10000 --dimension 512 --queries 100 --top-k 100
 ```
 
-## Full verification
+## Verify toàn bộ
 
 ```powershell
 uv run pytest
@@ -59,9 +70,23 @@ uv pip check
 git diff --check
 ```
 
-If `uv pip check` reports duplicate `charset-normalizer` metadata, do not delete
-the active environment in place during a run. Close processes using `.venv`,
-rename it as a backup, then run a fresh locked `uv sync` and re-run all gates.
+## Lỗi environment hiện biết
 
-CPU is enough for mock/fixture verification. CUDA/model-scale claims require an
-explicit GPU run and recorded hardware.
+`uv pip check` có thể báo cùng tồn tại:
+
+```text
+charset_normalizer-3.4.7.dist-info
+charset_normalizer-3.4.9.dist-info
+```
+
+Đây là duplicate installed metadata của environment hiện tại. Không xóa thủ
+công trong environment dùng chung. Cách an toàn là tạo lại `.venv` riêng sau
+khi xác nhận không có process đang dùng nó.
+
+## Quy tắc evidence
+
+- Fixture chỉ chứng minh plumbing.
+- Synthetic benchmark chỉ chứng minh engineering path.
+- `provider-doctor` không chứng minh model đã chạy.
+- Chỉ dùng `REAL_RUNTIME_VERIFIED` sau khi backend/model thật được execute.
+- Không gọi metric là BTC score nếu chưa chạy official dataset/evaluator.

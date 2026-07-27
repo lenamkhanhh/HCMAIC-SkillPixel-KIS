@@ -1,5 +1,8 @@
 # Upstream provenance
 
+> File này giữ thông tin provenance kỹ thuật của upstream. Hướng dẫn team và
+> report trạng thái hiện tại nằm tại `README.md` và `TRANG_THAI_HE_THONG.md`.
+
 ## Origin
 
 - Repository: https://github.com/hhlearntocode/SoftSignalsRetrievalSystems-AIC2025

@@ -1,28 +1,28 @@
-# 01 — Kiến trúc
+# 01 — Kiến trúc hệ thống
 
-## Offline
+## Offline pipeline
 
 ```mermaid
 flowchart LR
-  A["Raw video / supplied keyframes"] --> B["Dataset adapter"]
+  A["Raw video / keyframe có sẵn"] --> B["Dataset adapter"]
   B --> C["Ingestion + timestamp provenance"]
   C --> D["Shot detector + sampler"]
-  D --> E["Visual / OCR / ASR / caption records"]
+  D --> E["Visual / OCR / ASR / caption record"]
   E --> F["Provider registry"]
-  F --> G["Per-modality indexes"]
-  G --> H["Versioned manifests + hashes"]
+  F --> G["Per-modality index"]
+  G --> H["Manifest có version và hash"]
 ```
 
-## Online
+## Online pipeline mục tiêu
 
 ```mermaid
 flowchart LR
-  Q["Text / conversational query"] --> R["Channel retrievers"]
+  Q["Text / conversational query"] --> R["Channel retriever"]
   R --> V["Visual"]
   R --> O["OCR"]
   R --> A["ASR"]
-  R --> C["Caption/metadata"]
-  V --> F["RRF or weighted late fusion"]
+  R --> C["Caption / metadata"]
+  V --> F["RRF hoặc weighted late fusion"]
   O --> F
   A --> F
   C --> F
@@ -31,33 +31,21 @@ flowchart LR
   K --> U["API / operator UI / submission preview"]
 ```
 
-## Interactive and future agent
+## Trạng thái kết nối thực tế
 
-```mermaid
-sequenceDiagram
-  participant User
-  participant UI
-  participant API
-  participant Retrieval
-  User->>UI: query
-  UI->>API: POST /search
-  API->>Retrieval: canonical request
-  Retrieval-->>API: explained ranked results
-  API-->>UI: frames + scores + timestamps
-  User->>UI: relevant / not relevant
-  UI->>API: POST /feedback
-  Note over API: Future KISC agent reuses the same contracts
-```
+`RetrievalService` hiện embed query và search trực tiếp trên một visual index.
+`RetrievalOrchestrator`, fusion, temporal expansion và reranker đã có module và
+test, nhưng chưa được nối hoàn toàn vào service đang serve API/UI.
 
-## Boundaries and ownership
+## Ranh giới module
 
-| Module | Responsibility | Suggested role |
+| Module | Trách nhiệm | Role phù hợp |
 |---|---|---|
-| `ingestion/` | dataset, timestamps, shots | Data/ingestion engineer |
-| `embedding/`, `features/` | model and modality adapters | Multimodal ML engineer |
-| `indexing/`, `retrieval/` | indexes, fusion, temporal, rerank | Retrieval engineer |
-| `api/`, `ui/` | operator and future-agent interface | Backend/frontend engineer |
-| `benchmark/`, `evaluation/` | metrics, frozen runs, regression | Evaluation/QA engineer |
+| `ingestion/` | dataset, timestamp, shot | Data engineer |
+| `embedding/`, `features/` | model và modality adapter | Multimodal ML engineer |
+| `indexing/`, `retrieval/` | index, fusion, temporal, rerank | Retrieval engineer |
+| `api/`, `ui/` | giao diện operator và future agent | Backend/frontend engineer |
+| `benchmark/`, `evaluation/` | metric, frozen run, regression | Evaluation/QA engineer |
 
-Dependencies point inward through contracts. Optional model imports are lazy;
-the mandatory offline path never needs weights or network.
+Optional model phải lazy-load. Đường chạy offline bắt buộc không được phụ thuộc
+weights hoặc network.
