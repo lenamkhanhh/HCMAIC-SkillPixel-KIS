@@ -45,12 +45,14 @@ class KISRuntime:
         provider_selection: dict[str, Any] | None = None,
         channel_status: dict[str, str] | None = None,
         asr_enabled: bool = False,
+        max_per_video: int | None = 5,
     ) -> KISRuntime:
         retriever = SkillPixelRetriever(index, provider)
         orchestrator = KISHybridOrchestrator(
             retriever,
             optional_channels=optional_channels,
             asr_enabled=asr_enabled,
+            max_per_video=max_per_video,
         )
         return cls(
             index=index,

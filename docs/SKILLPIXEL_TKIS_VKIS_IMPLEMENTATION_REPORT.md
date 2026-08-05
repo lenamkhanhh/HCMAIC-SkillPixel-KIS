@@ -657,6 +657,95 @@ uv run pytest tests/test_kis_evaluation.py tests/test_skillpixel_cli.py -> 5 pas
 uv run ruff check <K9 source/tests> -> pass
 uv run mypy <K9 source> -> pass
 uv run pytest -> 234 passed, 1 warning
+
+### K10 completed — full raw-to-submission rehearsal
+
+K10 đã chạy trên `DataMockTest` độc lập với BTC artifacts:
+
+```text
+uv run hcmaic ingest-raw \
+  --input ..\learn\skillpixel\Buoi_08_Mock_contest_KIS\DataMockTest\videos \
+  --output artifacts\kis-k10-raw-v1 --stride-frames 10
+-> 250 videos, 97,236 source frames, 9,835 sampled frames
+-> uniform_stride_10_v1, max_nearest_frame_error=9
+
+uv run hcmaic build-skillpixel-index \
+  --input artifacts\kis-k10-raw-v1 \
+  --output artifacts\kis-k10-index-v1 --provider clip --device cpu --batch-size 32
+-> provider clip thật, 512D, local_files_only=true, FAISS IndexFlatIP exact
+
+uv run hcmaic retrieve-kis ... --top-k 100
+-> 100 queries, mỗi query 100 result
+
+uv run hcmaic export-skillpixel ...
+-> submission valid=true, 100 queries, 100 answers/query
+
+uv run hcmaic export-kis ...
+-> submission valid, quality_status=UNVALIDATED_ON_HCMAIC
+```
+
+Artifacts rehearsal (generated, không commit):
+
+- `artifacts/kis-k10-raw-v1/dataset_manifest.json`
+- `artifacts/kis-k10-raw-v1/coverage_report.json`
+- `artifacts/kis-k10-index-v1/{catalog.jsonl,embeddings.npy,id_map.json,index.faiss,dataset_manifest.json,index_manifest.json}`
+- `artifacts/kis-k10-results.jsonl`
+- `artifacts/kis-k10-submission-v1.csv`
+- `artifacts/kis-k10-submission-direct-v1.csv`
+- `artifacts/kis-k10-benchmark-v1/`
+
+Independent final checks:
+
+- `validate_raw_dataset`: 250 videos/9,835 sampled rows accepted.
+- `load_skillpixel_index`: `faiss.ntotal=9,835`, dimension 512; `id_map` source
+  mapping round-trip accepted.
+- NumPy exact oracle and FAISS top-100 returned identical `frame_uid` order and
+  scores for a sampled query vector.
+- Results JSONL: 100 unique query IDs, exactly 100 answers/query; answers carry
+  `video_filename` + `source_frame_idx`, never `keyframe_id`.
+- Strict CSV parser: 101 rows × 101 columns, quoting round-trip accepted,
+  filename/frame-count/range/query completeness validation passed.
+- Real KIS API smoke: `/health`, `/search/text`, `/search/image` all passed with
+  the same CLIP provider/index; TKIS/VKIS results preserved source-frame IDs.
+- Full no-qrels benchmark: baseline latency p50≈75 ms, p95≈136 ms; all
+  Recall/MRR/QueryScore values are `null` by design.
+
+K10 compact final integration test:
+
+- `tests/test_kis_final_smoke.py` runs raw ingestion → normalized exact index →
+  TKIS/VKIS hybrid search → JSONL → validated 100-answer CSV using a local
+  deterministic test provider only inside the test. It does not create or use
+  production artifacts.
+
+K10 verification commands:
+
+```text
+uv run pytest tests/test_kis_final_smoke.py -> 1 passed
+uv run pytest -> 235 passed, 1 warning
+uv run ruff check src tests -> All checks passed
+uv run mypy src -> Success: no issues found in 62 source files
+```
+
+Model/provider decision and limitations:
+
+- Selected provider: real CLIP `openai/clip-vit-base-patch32`, revision
+  `3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268`, 512D, CPU, local cache.
+- Preferred SigLIP2 `google/siglip2-base-patch16-224` was not cached; no network
+  download was attempted. The fallback is real CLIP, not mock.
+- OCR/PaddleOCR, object/Ultralytics and ASR/Whisper artifacts were not available
+  locally; channels are unavailable/disabled and never contribute fake scores.
+- HCMAIC official qrels and official QueryScore formula are absent. No Recall,
+  MRR, top-1, SOTA or contest-quality claim is made.
+
+Rollback and commit history:
+
+- Foundation rollback point: `c875d43` (`test(skillpixel): verify TKIS VKIS submission pipeline`).
+- K0–K9 commits are listed by `git log --oneline`; K10 final verification commit
+  is created only after the post-edit full test/lint/type-check gate.
+- Rollback must use explicit `git revert` of the K10/K9… commits in reverse order;
+  no reset/checkout/destructive cleanup was used.
+
+Push/PR status: pending final Git identity/remote check and `staging HEAD` push.
 ```
 ```
 ```
