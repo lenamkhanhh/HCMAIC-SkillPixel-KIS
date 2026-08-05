@@ -89,7 +89,7 @@ def test_tkis_batch_uses_text_encoder_and_maps_source_frame(retriever: SkillPixe
     assert retriever.provider.image_calls == 1
     assert list(results) == ["Q1", "Q2"]
     assert [hit.rank for hit in results["Q1"]] == [1, 2, 3]
-    assert results["Q1"][0].video_filename == "demo.mp4"
+    assert results["Q1"][0].video_filename == "demo.avi"
     assert results["Q1"][0].source_frame_idx in {0, 2, 4, 6}
     assert results["Q1"][0].frame_uid
 
