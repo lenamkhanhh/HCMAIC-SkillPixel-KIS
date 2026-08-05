@@ -12,6 +12,7 @@ import pytest
 
 from hcmaic.skillpixel.raw import (
     RawIngestError,
+    coverage_report,
     ingest_raw_videos,
     validate_raw_dataset,
 )
@@ -94,3 +95,30 @@ def test_raw_ingestion_does_not_use_btc_keyframe_layout(tmp_path: Path):
     assert (output / "map-keyframes" / "video8328.csv").is_file()
     assert not (output / "clip-features-32").exists()
 
+
+def test_raw_ingestion_is_idempotent_for_same_source_and_stride(tmp_path: Path):
+    source = _write_video(tmp_path / "raw" / "demo.mp4", frame_count=9)
+    output = tmp_path / "generated"
+
+    first = ingest_raw_videos(source.parent, output, stride_frames=2)
+    manifest_before = (output / "dataset_manifest.json").read_text(encoding="utf-8")
+    second = ingest_raw_videos(source.parent, output, stride_frames=2)
+
+    assert first.n_frames == second.n_frames == 5
+    assert manifest_before == (output / "dataset_manifest.json").read_text(encoding="utf-8")
+    assert validate_raw_dataset(output).n_frames == 5
+
+
+def test_coverage_report_exposes_nearest_frame_error(tmp_path: Path):
+    source = _write_video(tmp_path / "raw" / "demo.mp4", frame_count=8)
+    output = tmp_path / "generated"
+
+    ingest_raw_videos(source.parent, output, stride_frames=2)
+    report = coverage_report(output)
+    persisted = json.loads((output / "coverage_report.json").read_text(encoding="utf-8"))
+
+    assert report.n_source_frames == 8
+    assert report.n_sampled_frames == 4
+    assert report.max_nearest_frame_error == 1
+    assert report.per_video[0]["max_gap_frames"] == 2
+    assert persisted["max_nearest_frame_error"] == 1

@@ -22,6 +22,7 @@ from PIL import Image
 from hcmaic.ingestion.video import SUPPORTED_EXTENSIONS
 
 RAW_MANIFEST_NAME = "dataset_manifest.json"
+RAW_COVERAGE_NAME = "coverage_report.json"
 RAW_SCHEMA_VERSION = "skillpixel-raw-v1"
 MAPPING_COLUMNS = (
     "n",
@@ -78,6 +79,28 @@ class RawIngestReport:
 class RawDatasetStats:
     n_videos: int
     n_frames: int
+
+
+@dataclass(frozen=True)
+class RawCoverageReport:
+    """Coverage/density evidence for one generated raw-video dataset."""
+
+    n_videos: int
+    n_source_frames: int
+    n_sampled_frames: int
+    sampling_ratio: float
+    max_nearest_frame_error: int
+    per_video: tuple[dict[str, Any], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n_videos": self.n_videos,
+            "n_source_frames": self.n_source_frames,
+            "n_sampled_frames": self.n_sampled_frames,
+            "sampling_ratio": self.sampling_ratio,
+            "max_nearest_frame_error": self.max_nearest_frame_error,
+            "per_video": [dict(item) for item in self.per_video],
+        }
 
 
 def _sha256(path: Path) -> str:
@@ -147,6 +170,83 @@ def _write_mapping(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=MAPPING_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _read_mapping(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _mapping_count(path: Path) -> int:
+    return len(_read_mapping(path))
+
+
+def _nearest_frame_error(sampled: list[int], frame_count: int) -> int:
+    if not sampled or frame_count < 1:
+        return frame_count
+    sampled_array = np.asarray(sampled, dtype=np.int64)
+    source = np.arange(frame_count, dtype=np.int64)
+    positions = np.searchsorted(sampled_array, source, side="left")
+    right = np.minimum(positions, len(sampled_array) - 1)
+    left = np.maximum(positions - 1, 0)
+    distances = np.minimum(
+        np.abs(source - sampled_array[left]),
+        np.abs(source - sampled_array[right]),
+    )
+    return int(distances.max())
+
+
+def coverage_report(root: Path) -> RawCoverageReport:
+    """Calculate deterministic sample density and nearest-frame coverage."""
+    root = Path(root)
+    manifest_path = root / RAW_MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise RawIngestError(f"Missing {RAW_MANIFEST_NAME} in {root}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    per_video: list[dict[str, Any]] = []
+    total_source = 0
+    total_sampled = 0
+    global_error = 0
+    for item in manifest.get("raw_videos", []):
+        video_id = str(item.get("video_id", ""))
+        frame_count = int(item.get("frame_count", 0))
+        mapping_path = root / "map-keyframes" / f"{video_id}.csv"
+        rows = _read_mapping(mapping_path)
+        sampled = sorted(int(row["source_frame_idx"]) for row in rows)
+        gaps = np.diff(np.asarray(sampled, dtype=np.int64)) if len(sampled) > 1 else np.array([])
+        nearest_error = _nearest_frame_error(sampled, frame_count)
+        payload = {
+            "video_id": video_id,
+            "video_filename": str(item.get("video_filename", f"{video_id}.mp4")),
+            "frame_count": frame_count,
+            "sampled_frames": len(sampled),
+            "sampling_ratio": len(sampled) / frame_count if frame_count else 0.0,
+            "min_gap_frames": int(gaps.min()) if gaps.size else None,
+            "max_gap_frames": int(gaps.max()) if gaps.size else None,
+            "mean_gap_frames": float(gaps.mean()) if gaps.size else None,
+            "max_nearest_frame_error": nearest_error,
+        }
+        per_video.append(payload)
+        total_source += frame_count
+        total_sampled += len(sampled)
+        global_error = max(global_error, nearest_error)
+    return RawCoverageReport(
+        n_videos=len(per_video),
+        n_source_frames=total_source,
+        n_sampled_frames=total_sampled,
+        sampling_ratio=total_sampled / total_source if total_source else 0.0,
+        max_nearest_frame_error=global_error,
+        per_video=tuple(per_video),
+    )
+
+
+def _write_coverage_report(root: Path) -> RawCoverageReport:
+    report = coverage_report(root)
+    (root / RAW_COVERAGE_NAME).write_text(
+        json.dumps(report.to_dict(), indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return report
 
 
 def _extract_one(source: Path, output_root: Path, stride_frames: int) -> RawVideoInfo:
@@ -278,9 +378,10 @@ def _write_manifest(root: Path, videos: list[RawVideoInfo], stride_frames: int) 
         "raw_videos": raw_videos,
         "n_videos": len(videos),
         "n_frames": sum(
-            len(list((root / "map-keyframes" / f"{item.video_id}.csv").open())) - 1
+            _mapping_count(root / "map-keyframes" / f"{item.video_id}.csv")
             for item in videos
         ),
+        "coverage_report": RAW_COVERAGE_NAME,
         "files": _generated_file_hashes(root),
     }
     payload["dataset_hash"] = hashlib.sha256(
@@ -306,8 +407,57 @@ def ingest_raw_videos(
         raise RawIngestError(f"stride_frames must be >= 1, got {stride_frames}")
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
+    sources = _video_files(Path(input_path))
+    existing_manifest = output_root / RAW_MANIFEST_NAME
+    if existing_manifest.is_file() and not force:
+        try:
+            manifest = json.loads(existing_manifest.read_text(encoding="utf-8"))
+            expected_sources = [
+                (_video_id(source), source.name, _sha256(source)) for source in sources
+            ]
+            actual_sources = [
+                (
+                    str(item.get("video_id", "")),
+                    str(item.get("video_filename", "")),
+                    str(item.get("sha256", "")),
+                )
+                for item in manifest.get("raw_videos", [])
+            ]
+            if (
+                int(manifest.get("stride_frames", -1)) == stride_frames
+                and actual_sources == expected_sources
+                and (output_root / RAW_COVERAGE_NAME).is_file()
+            ):
+                stats = validate_raw_dataset(output_root)
+                cached_infos = tuple(
+                    RawVideoInfo(
+                        video_id=str(item["video_id"]),
+                        video_filename=str(item["video_filename"]),
+                        source_path=Path(str(item.get("source_path", item["video_filename"]))),
+                        width=int(item["width"]),
+                        height=int(item["height"]),
+                        fps=float(item["fps"]),
+                        frame_count=int(item["frame_count"]),
+                        duration_s=float(item.get("duration_seconds", 0.0)),
+                        sha256=str(item["sha256"]),
+                        timestamp_source=str(item.get("timestamp_source", "unknown")),
+                    )
+                    for item in manifest["raw_videos"]
+                )
+                return RawIngestReport(
+                    cached_infos,
+                    str(manifest.get("sampling_policy", f"uniform_stride_{stride_frames}_v1")),
+                    stats.n_frames,
+                )
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+            pass
+        if any((output_root / name).exists() for name in ("keyframes", "map-keyframes")):
+            raise RawIngestError(
+                f"Existing raw dataset {output_root} does not match the requested source/stride; "
+                "use a new versioned output path or explicit force=True/--force"
+            )
     infos: list[RawVideoInfo] = []
-    for source in _video_files(Path(input_path)):
+    for source in sources:
         video_id = _video_id(source)
         frames_dir = output_root / "keyframes" / video_id
         if frames_dir.exists() and any(frames_dir.iterdir()):
@@ -321,11 +471,14 @@ def ingest_raw_videos(
             (output_root / "media-info" / f"{video_id}.json").unlink(missing_ok=True)
         infos.append(_extract_one(source, output_root, stride_frames))
     _write_manifest(output_root, infos, stride_frames)
+    _write_coverage_report(output_root)
+    # Include the coverage artifact in the manifest's generated-file hashes.
+    _write_manifest(output_root, infos, stride_frames)
     return RawIngestReport(
         tuple(infos),
         f"uniform_stride_{stride_frames}_v1",
         sum(
-            len(list((output_root / "map-keyframes" / f"{item.video_id}.csv").open())) - 1
+            _mapping_count(output_root / "map-keyframes" / f"{item.video_id}.csv")
             for item in infos
         ),
     )
@@ -354,14 +507,15 @@ def validate_raw_dataset(root: Path) -> RawDatasetStats:
         mapping_path = root / "map-keyframes" / f"{video_id}.csv"
         if not mapping_path.is_file():
             raise RawIngestError(f"Missing mapping for {video_id}")
-        with mapping_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            fields = reader.fieldnames or []
-            missing = [column for column in MAPPING_COLUMNS[:7] if column not in fields]
-            if missing:
-                raise RawIngestError(f"{mapping_path.name}: missing required columns {missing}")
-            seen_source: set[int] = set()
-            rows = list(reader)
+        rows = _read_mapping(mapping_path)
+        fields = list(rows[0]) if rows else []
+        if not fields:
+            with mapping_path.open(newline="", encoding="utf-8") as handle:
+                fields = list(csv.DictReader(handle).fieldnames or [])
+        missing = [column for column in MAPPING_COLUMNS[:7] if column not in fields]
+        if missing:
+            raise RawIngestError(f"{mapping_path.name}: missing required columns {missing}")
+        seen_source: set[int] = set()
         for row in rows:
             try:
                 n = int(row["n"])

@@ -421,3 +421,25 @@ uv run mypy ...                           -> pass
 ```
 
 K0 chưa bật OCR/object/ASR hay fusion trong production runtime; các channel tiếp theo phải trả evidence thật hoặc trạng thái unavailable, tuyệt đối không sinh mock score.
+
+### K1 completed — raw ingestion and coverage hardening
+
+K1 mở rộng `src/hcmaic/skillpixel/raw.py` và `tests/test_skillpixel_raw.py`:
+
+- Rerun cùng raw source, SHA-256 và stride được xử lý idempotent nếu dataset đã validate.
+- Mismatch source/stride trên output cũ fail-closed và yêu cầu versioned output hoặc explicit `--force`.
+- Thêm `coverage_report.json` với source-frame count, sampled-frame count, sampling ratio, gap statistics và `max_nearest_frame_error`.
+- Manifest ghi tên coverage artifact và hash generated files sau khi coverage được tạo.
+- Đọc mapping bằng context manager, giữ source order và `source_frame_idx` immutable.
+- Chưa bật TransNetV2/hybrid shot sampling vì chưa có dependency/cache; uniform source-frame stride vẫn là baseline operational.
+
+K1 verification:
+
+```text
+uv run pytest tests/test_skillpixel_raw.py  -> 5 passed
+uv run pytest                              -> 209 passed, 1 warning
+uv run ruff check raw/tests                -> pass
+uv run mypy src/hcmaic/skillpixel/raw.py   -> pass
+CLI smoke: video8328.mp4 -> 287 source frames, 29 sampled frames, nearest error 6
+CLI rerun: same source/stride -> idempotent pass
+```
