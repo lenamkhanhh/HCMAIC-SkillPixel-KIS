@@ -442,4 +442,37 @@ uv run ruff check raw/tests                -> pass
 uv run mypy src/hcmaic/skillpixel/raw.py   -> pass
 CLI smoke: video8328.mp4 -> 287 source frames, 29 sampled frames, nearest error 6
 CLI rerun: same source/stride -> idempotent pass
+
+### K2 completed — visual provider provenance, exact index loading and benchmark
+
+K2 harden `src/hcmaic/embedding/clip_real.py`, `src/hcmaic/embedding/siglip2.py`
+and `src/hcmaic/skillpixel/index.py`, đồng thời thêm:
+
+- `src/hcmaic/benchmark/kis.py`: benchmark batched TKIS/VKIS trên cùng visual
+  index, ghi provider metadata, processor/preprocess revision, exact FAISS
+  metadata, latency batch/mean và metric quality chỉ khi qrels được truyền vào
+  một cách tường minh.
+- `src/hcmaic/benchmark/__init__.py`: public benchmark exports.
+- `tests/test_kis_benchmark.py`: benchmark cả TKIS và VKIS với local deterministic
+  test provider; test không-qrels giữ Recall/MRR/QueryScore là `null` và test
+  qrels phải khai báo provenance.
+
+Index loader hiện fail-closed nếu manifest không chứng minh raw-video source,
+`btc_artifacts_used=false`, `provider_execution=validated-local`, provider không
+phải `mock`, hoặc `id_map` không round-trip đúng `frame_uid`, `video_id`,
+`video_filename`, `source_frame_idx`, timestamp và image path. Hai provider thật
+ghi thêm `processor_revision` và `preprocess_hash` vào manifest.
+
+K2 verification:
+
+```text
+uv run pytest tests/test_kis_benchmark.py tests/test_skillpixel_index.py -> 4 passed
+uv run ruff check <K2 files>                                         -> pass
+uv run mypy <K2 source files>                                        -> pass
+uv run pytest                                                        -> 211 passed, 1 warning
+```
+
+Benchmark không tự đọc fixture/BTC qrels. Checkout hiện chưa có HCMAIC qrels
+chính thức, nên quality status vẫn là `UNVALIDATED_ON_HCMAIC`; K2 chỉ cung cấp
+latency/provider/index evidence, không claim Recall/MRR contest.
 ```

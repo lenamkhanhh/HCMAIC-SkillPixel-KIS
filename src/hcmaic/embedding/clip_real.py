@@ -7,6 +7,7 @@ Never imported by tests; tests must not download weights.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,7 @@ class RealClipEmbeddingProvider(EmbeddingProvider):
 
     def info(self) -> dict[str, Any]:
         data = super().info()
+        preprocessing = "CLIPProcessor RGB resize/crop 224px"
         data.update(
             {
                 "model_name": self._model_name,
@@ -83,7 +85,9 @@ class RealClipEmbeddingProvider(EmbeddingProvider):
                 "batch_size": self._batch,
                 "dtype": str(next(self._model.parameters()).dtype),
                 "local_files_only": self._local_files_only,
-                "preprocessing": "CLIPProcessor RGB resize/crop 224px",
+                "processor_revision": self._revision,
+                "preprocessing": preprocessing,
+                "preprocess_hash": hashlib.sha256(preprocessing.encode("utf-8")).hexdigest(),
                 "evidence_level": "REAL_PROVIDER",
             }
         )

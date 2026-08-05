@@ -330,6 +330,14 @@ def load_skillpixel_index(artifact_dir: Path) -> SkillPixelIndex:
         )
     if not isinstance(id_map, list):
         raise SkillPixelIndexError("id_map.json must be a list of row objects")
+    if index_manifest.get("raw_video_source") is not True:
+        raise SkillPixelIndexError("index is not marked as raw-video-derived")
+    if index_manifest.get("btc_artifacts_used") is not False:
+        raise SkillPixelIndexError("BTC artifacts are not allowed in the SkillPixel index")
+    if index_manifest.get("provider_execution") != "validated-local":
+        raise SkillPixelIndexError("index provider execution is not validated-local")
+    if str(index_manifest.get("embedding", {}).get("provider", "")).lower() == "mock":
+        raise SkillPixelIndexError("mock provider is not allowed in a production SkillPixel index")
     if embeddings.ndim != 2 or len(catalog) != len(id_map) != embeddings.shape[0]:
         raise SkillPixelIndexError(
             f"row count mismatch catalog={len(catalog)} id_map={len(id_map)} "
@@ -368,6 +376,12 @@ def load_skillpixel_index(artifact_dir: Path) -> SkillPixelIndex:
             )
         if mapping.get("video_id") != record.video_id:
             raise SkillPixelIndexError(f"id_map row {row} video_id mismatch")
+        if mapping.get("video_filename") != _video_filename(record):
+            raise SkillPixelIndexError(f"id_map row {row} video_filename mismatch")
+        if int(mapping.get("timestamp_ms", -1)) != record.timestamp_ms:
+            raise SkillPixelIndexError(f"id_map row {row} timestamp_ms mismatch")
+        if mapping.get("image_path") != record.image_path:
+            raise SkillPixelIndexError(f"id_map row {row} image_path mismatch")
 
     dataset_root = Path(str(index_manifest.get("dataset_root", "")))
     if not dataset_root:
