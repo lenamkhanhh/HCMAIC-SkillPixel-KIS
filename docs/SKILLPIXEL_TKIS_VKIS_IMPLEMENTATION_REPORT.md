@@ -572,6 +572,36 @@ uv run pytest tests/test_asr.py -> 3 passed
 uv run ruff check <ASR source/tests> -> pass
 uv run mypy src/hcmaic/retrieval/asr.py -> pass
 uv run pytest -> 224 passed, 1 warning
+
+### K7 completed — hybrid fusion, source-frame dedup, diversity and bounded rerank
+
+K7 mở rộng `src/hcmaic/retrieval/candidates.py` và `fusion.py`, đồng thời thêm
+`src/hcmaic/retrieval/kis_orchestrator.py` và
+`tests/test_kis_orchestrator.py`:
+
+- `FusedCandidate` giữ canonical source mapping, per-channel evidence và
+  `rerank_score`; fusion ghi lại provider/rank/score/text/metadata của từng
+  channel.
+- `KISHybridOrchestrator` gọi visual TKIS/VKIS bắt buộc, OCR/object optional,
+  ASR chỉ khi `asr_enabled` và promotion policy cho phép; lỗi artifact/provider
+  optional được cô lập thành `unavailable_channels`.
+- RRF là baseline mặc định; weighted late fusion nhận weights explicit.
+- Dedup theo `(video_id, source_frame_idx)`, merge signal/evidence giữa channel,
+  không dùng `faiss_row` làm identity.
+- Diversity quota theo video rồi backfill deterministic; bounded reranker chỉ
+  xem candidate pool hữu hạn và thêm bonus agreement/visual evidence có giải
+  thích trong result.
+- Canonical output luôn là `KISResult` với `Evidence`, source-frame mapping và
+  quality status `UNVALIDATED_ON_HCMAIC`.
+
+K7 verification:
+
+```text
+uv run pytest tests/test_kis_orchestrator.py tests/test_fusion.py tests/test_orchestrator.py -> 10 passed
+uv run ruff check <K7 source/tests> -> pass
+uv run mypy <K7 source> -> pass
+uv run pytest -> 228 passed, 1 warning
+```
 ```
 ```
 ```

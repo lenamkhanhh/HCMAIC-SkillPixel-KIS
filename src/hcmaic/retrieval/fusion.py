@@ -11,6 +11,9 @@ def _candidate_for(hit: ChannelHit) -> FusedCandidate:
         video_id=hit.video_id,
         timestamp_ms=hit.timestamp_ms,
         final_score=0.0,
+        frame_uid=hit.frame_uid,
+        video_filename=hit.video_filename,
+        source_frame_idx=hit.source_frame_idx,
     )
 
 
@@ -23,6 +26,23 @@ def _record_hit(
         candidate.evidence_texts[modality] = hit.evidence_text
     if hit.provider not in candidate.contributing_providers:
         candidate.contributing_providers.append(hit.provider)
+    if candidate.frame_uid is None and hit.frame_uid is not None:
+        candidate.frame_uid = hit.frame_uid
+    if candidate.video_filename is None and hit.video_filename is not None:
+        candidate.video_filename = hit.video_filename
+    if candidate.source_frame_idx is None and hit.source_frame_idx is not None:
+        candidate.source_frame_idx = hit.source_frame_idx
+    candidate.evidence[modality] = {
+        "frame_uid": hit.frame_uid,
+        "video_filename": hit.video_filename,
+        "source_frame_idx": hit.source_frame_idx,
+        "timestamp_ms": hit.timestamp_ms,
+        "provider": hit.provider,
+        "score": hit.score,
+        "rank": hit.rank,
+        "text": hit.evidence_text,
+        "metadata": dict(hit.evidence),
+    }
 
 
 def _rank(candidates: dict[str, FusedCandidate], top_k: int) -> list[FusedCandidate]:

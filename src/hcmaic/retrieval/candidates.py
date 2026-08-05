@@ -37,3 +37,4 @@ class FusedCandidate:
     video_filename: str | None = None
     source_frame_idx: int | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
+    rerank_score: float | None = None
