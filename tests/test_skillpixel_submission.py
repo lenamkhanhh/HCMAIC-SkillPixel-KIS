@@ -27,7 +27,9 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     with corpus.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["video", "path", "duration_seconds", "fps", "frame_count", "width", "height"],
+            fieldnames=[
+                "video", "path", "duration_seconds", "fps", "frame_count", "width", "height"
+            ],
         )
         writer.writeheader()
         writer.writerow(
