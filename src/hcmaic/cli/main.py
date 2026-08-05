@@ -461,6 +461,65 @@ def _cmd_serve_kis(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_benchmark_kis(args: argparse.Namespace) -> int:
+    from hcmaic.evaluation.kis import (
+        evaluate_kis_runtime,
+        load_kis_qrels,
+        run_kis_ablation,
+    )
+
+    try:
+        runtime = _kis_runtime(args)
+        questions_path = Path(args.questions)
+        questions, queries = _queries_to_kis(questions_path, top_k=args.top_k)
+        qrels = (
+            load_kis_qrels(Path(args.qrels), source=args.qrels_source)
+            if args.qrels
+            else None
+        )
+        baseline, per_query = evaluate_kis_runtime(
+            runtime,
+            questions,
+            qrels,
+            top_k=args.top_k,
+            query_root=questions_path.parent,
+            frame_tolerance=args.frame_tolerance,
+        )
+        ablation = run_kis_ablation(
+            runtime,
+            questions,
+            qrels,
+            top_k=args.top_k,
+            query_root=questions_path.parent,
+        )
+        report = {
+            "baseline": baseline,
+            "ablation": ablation,
+            "provider": runtime.provider.info(),
+            "index": runtime.index.index_manifest,
+            "channels": runtime.channel_status,
+        }
+        if args.out:
+            out_dir = Path(args.out)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "kis_benchmark.json").write_text(
+                json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _write_kis_results(
+                runtime.search_queries(queries), out_dir / "kis_benchmark_results.jsonl"
+            )
+            (out_dir / "kis_per_query.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in per_query),
+                encoding="utf-8",
+            )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(report, ensure_ascii=False))
+    return 0
+
+
 def _cmd_scale_benchmark(args: argparse.Namespace) -> int:
     from hcmaic.indexing.scale_benchmark import (
         ScaleBenchmarkConfig,
@@ -712,6 +771,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=_cmd_serve_kis)
+
+    p = sub.add_parser(
+        "benchmark-kis",
+        help="Benchmark KIS with optional official qrels and channel ablations",
+    )
+    _add_kis_runtime_args(p)
+    p.add_argument("--questions", required=True)
+    p.add_argument("--qrels")
+    p.add_argument("--qrels-source", default="unknown")
+    p.add_argument("--top-k", type=int, default=100)
+    p.add_argument("--frame-tolerance", type=int, default=12)
+    p.add_argument("--out")
+    p.set_defaults(func=_cmd_benchmark_kis)
 
     p = sub.add_parser(
         "export-skillpixel",

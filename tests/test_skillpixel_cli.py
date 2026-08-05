@@ -76,6 +76,15 @@ def test_skillpixel_cli_commands_are_available():
     kis_serve = parser.parse_args(
         ["serve-kis", "--index", "index", "--port", "8010"]
     )
+    kis_benchmark = parser.parse_args(
+        [
+            "benchmark-kis",
+            "--index",
+            "index",
+            "--questions",
+            "questions.csv",
+        ]
+    )
 
     assert ingest.command == "ingest-raw"
     assert ingest.stride_frames == 10
@@ -86,3 +95,4 @@ def test_skillpixel_cli_commands_are_available():
     assert kis_retrieve.command == "retrieve-kis"
     assert kis_export.command == "export-kis"
     assert kis_serve.command == "serve-kis"
+    assert kis_benchmark.command == "benchmark-kis"

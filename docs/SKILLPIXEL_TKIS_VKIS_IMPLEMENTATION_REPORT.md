@@ -631,6 +631,33 @@ uv run pytest tests/test_kis_api.py tests/test_skillpixel_cli.py -> 3 passed
 uv run ruff check <K8 source/tests> -> pass
 uv run mypy <K8 source> -> pass
 uv run pytest -> 230 passed, 1 warning
+
+### K9 completed — HCMAIC KIS qrels evaluator and ablation harness
+
+K9 thêm `src/hcmaic/evaluation/kis.py`, `tests/test_kis_evaluation.py` và CLI
+`benchmark-kis`:
+
+- `load_kis_qrels` đọc JSON/JSONL/CSV qrels, hiểu `frame_uid`,
+  `relevant_frame_ids`, answer cell `video_filename,source_frame_idx`,
+  `relevant_video_ids` và không tự coi file fixture là official.
+- `evaluate_kis_runtime` đo Recall@1/5/20/50/100, MRR, p50/p95/mean latency,
+  empty/invalid results và frame tolerance mặc định ±12; `QueryScore` để `null`
+  vì checkout không có official HCMAIC scoring definition.
+- Không có qrels: Recall/MRR/QueryScore là `null`, `quality_status` là
+  `UNVALIDATED_ON_HCMAIC`. Chỉ source được khai báo `hcmaic-official` mới có thể
+  đổi quality status, và hiện chưa có source như vậy trong repo.
+- `run_kis_ablation` chạy cùng query/input cho visual, visual+OCR,
+  visual+object, visual+ASR và all-configured; channel unavailable không bị
+  biến thành score giả.
+
+K9 verification:
+
+```text
+uv run pytest tests/test_kis_evaluation.py tests/test_skillpixel_cli.py -> 5 passed
+uv run ruff check <K9 source/tests> -> pass
+uv run mypy <K9 source> -> pass
+uv run pytest -> 234 passed, 1 warning
+```
 ```
 ```
 ```
