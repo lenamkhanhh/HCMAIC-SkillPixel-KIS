@@ -18,7 +18,7 @@ CATALOG_NAME = "catalog.jsonl"
 # Metadata keys copied from media-info JSON when present.
 _METADATA_KEYS = (
     "title", "author", "length", "publish_date", "watch_url", "keywords",
-    "width", "height",
+    "width", "height", "frame_count", "video_filename", "duration_seconds",
 )
 
 
@@ -57,8 +57,15 @@ def build_catalog(root: Path) -> list[FrameRecord]:
                 video_id=row.video_id,
                 keyframe_id=keyframe_id_for(row.n),
                 frame_idx=row.frame_idx,
+                source_frame_idx=(
+                    row.source_frame_idx if row.source_frame_idx is not None else row.frame_idx
+                ),
                 pts=row.pts_time,
-                timestamp_ms=round(row.pts_time * 1000),
+                timestamp_ms=(
+                    row.timestamp_ms
+                    if row.timestamp_ms is not None
+                    else round(row.pts_time * 1000)
+                ),
                 shot_id=row.shot_id,
                 shot_start_ms=(
                     round(row.shot_start * 1000) if row.shot_start is not None else None
@@ -67,6 +74,14 @@ def build_catalog(root: Path) -> list[FrameRecord]:
                     round(row.shot_end * 1000) if row.shot_end is not None else None
                 ),
                 image_path=image.relative_to(root).as_posix(),
+                video_filename=(
+                    row.video_filename
+                    or (info.get("video_filename") if isinstance(info, dict) else None)
+                ),
+                frame_count=(
+                    row.frame_count
+                    or (int(info["frame_count"]) if info.get("frame_count") else None)
+                ),
                 metadata=metadata,
             )
         )

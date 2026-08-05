@@ -28,6 +28,10 @@ OPTIONAL_COLUMNS = (
     "timestamp_source",
     "ingestion_provider",
     "sampling_policy",
+    "source_frame_idx",
+    "timestamp_ms",
+    "frame_count",
+    "video_filename",
 )
 SINGLE_FILE_NAME = "keyframe_mapping.csv"
 PER_VIDEO_DIR = "map-keyframes"
@@ -45,6 +49,10 @@ class MappingRow:
     fps: float
     frame_idx: int
     source: str  # file the row came from, for error messages
+    source_frame_idx: int | None = None
+    timestamp_ms: int | None = None
+    frame_count: int | None = None
+    video_filename: str | None = None
     shot_id: str | None = None
     frame_id: str | None = None
     shot_start: float | None = None
@@ -92,6 +100,10 @@ def _parse_rows(
                         fps=float(str(raw["fps"]).strip()),
                         frame_idx=int(str(raw["frame_idx"]).strip()),
                         source=src,
+                        source_frame_idx=_optional_int(raw, "source_frame_idx"),
+                        timestamp_ms=_optional_int(raw, "timestamp_ms"),
+                        frame_count=_optional_int(raw, "frame_count"),
+                        video_filename=(raw.get("video_filename") or "").strip() or None,
                         shot_id=(raw.get("shot_id") or "").strip() or None,
                         frame_id=(raw.get("frame_id") or "").strip()
                         or f"{vid}:{int(str(raw['n']).strip()):03d}",

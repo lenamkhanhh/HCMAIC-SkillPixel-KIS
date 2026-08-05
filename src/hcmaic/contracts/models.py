@@ -24,12 +24,15 @@ class FrameRecord(BaseModel):
     video_id: str
     keyframe_id: str
     frame_idx: int = Field(ge=0)
+    source_frame_idx: int | None = Field(default=None, ge=0)
     pts: float | None = None
     timestamp_ms: int = Field(ge=0)
     shot_id: str | None = None
     shot_start_ms: int | None = Field(default=None, ge=0)
     shot_end_ms: int | None = Field(default=None, ge=0)
     image_path: str  # relative to the dataset root, POSIX separators
+    video_filename: str | None = None
+    frame_count: int | None = Field(default=None, ge=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
     embedding_version: str | None = None
 
