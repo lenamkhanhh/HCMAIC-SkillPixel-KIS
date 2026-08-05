@@ -525,6 +525,31 @@ uv run pytest tests/test_ocr_bm25.py -> 4 passed
 uv run ruff check <OCR source/tests> -> pass
 uv run mypy src/hcmaic/retrieval/ocr_bm25.py -> pass
 uv run pytest -> 217 passed, 1 warning
+
+### K5 completed — raw-frame object artifact and retrieval channel
+
+K5 thêm `src/hcmaic/retrieval/object_retrieval.py` và
+`tests/test_object_retrieval.py`:
+
+- `ObjectRecord` giữ label, confidence, optional bbox và đầy đủ
+  `video_filename/source_frame_idx/timestamp` mapping.
+- `objects.jsonl` + `object_manifest.json` được sort/canonicalize/hash; loader
+  fail-closed với BTC provenance, sai dataset hash, provider/revision, duplicate
+  frame-label, non-finite confidence hoặc mock provider.
+- `ObjectRetrievalChannel` xây posting list trên label đã normalize (casefold,
+  bỏ dấu), tính điểm từ confidence + IDF của label, và trả `ChannelHit` có
+  evidence/mapping để fusion dùng tiếp.
+- Ultralytics/model weights chưa có local cache trong môi trường; chưa sinh
+  object artifact production. Runtime phải báo unavailable và không tự download.
+
+K5 verification:
+
+```text
+uv run pytest tests/test_object_retrieval.py -> 4 passed
+uv run ruff check <object source/tests>     -> pass
+uv run mypy src/hcmaic/retrieval/object_retrieval.py -> pass
+uv run pytest                               -> 221 passed, 1 warning
+```
 ```
 ```
 ```
