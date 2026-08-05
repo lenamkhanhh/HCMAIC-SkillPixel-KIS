@@ -30,7 +30,13 @@ class _ImageSpyProvider(EmbeddingProvider):
     def embed_images(self, paths: list[Path]) -> np.ndarray:
         self.image_batches.append(list(paths))
         return l2_normalize(
-            np.asarray([[float(int(path.stem) + 1), 1.0, 0.0] for path in paths], dtype=np.float32)
+            np.asarray(
+                [
+                    [float(int(path.stem) + 1) if path.stem.isdigit() else 2.0, 1.0, 0.0]
+                    for path in paths
+                ],
+                dtype=np.float32,
+            )
         )
 
     def embed_query_image(self, path: Path) -> np.ndarray:

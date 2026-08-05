@@ -171,3 +171,64 @@ class SkillPixelRetriever:
         questions = load_skillpixel_questions(questions_path)
         tkis = [(item.query_id, item.text) for item in questions if item.task == "TKIS"]
         return self.search_text_queries(tkis, top_k=top_k)
+
+    def search_image(
+        self, query_id: str, image_path: Path, top_k: int = 100
+    ) -> list[SkillPixelHit]:
+        """Search one VKIS image through the provider image tower."""
+        image_path = Path(image_path)
+        if not image_path.is_file():
+            raise FileNotFoundError(image_path)
+        vector = np.asarray(self.provider.embed_query_image(image_path), dtype=np.float32)
+        expected_shape = (1, self.index.dimension)
+        if vector.shape != expected_shape:
+            raise ValueError(
+                f"image query provider returned {vector.shape}; expected {expected_shape}"
+            )
+        return self._make_hits(query_id, "VKIS", self.index.search(vector[0], top_k))
+
+    def search_image_queries(
+        self, queries: list[tuple[str, Path]], *, top_k: int = 100
+    ) -> dict[str, list[SkillPixelHit]]:
+        """Batch VKIS image queries while preserving the caller's query order."""
+        if top_k < 1:
+            raise ValueError("top_k must be >= 1")
+        if not queries:
+            return {}
+        query_ids = [query_id.strip() for query_id, _ in queries]
+        if any(not query_id for query_id in query_ids):
+            raise ValueError("VKIS query_id must not be empty")
+        if len(set(query_ids)) != len(query_ids):
+            raise ValueError("VKIS query_id values must be unique")
+        paths = [Path(path) for _, path in queries]
+        missing = [str(path) for path in paths if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(missing[0])
+        vectors = np.asarray(self.provider.embed_images(paths), dtype=np.float32)
+        expected_shape = (len(queries), self.index.dimension)
+        if vectors.shape != expected_shape:
+            raise ValueError(
+                f"image query provider returned {vectors.shape}; expected {expected_shape}"
+            )
+        results: dict[str, list[SkillPixelHit]] = {}
+        for query_id, vector in zip(query_ids, vectors, strict=True):
+            results[query_id] = self._make_hits(
+                query_id, "VKIS", self.index.search(vector, top_k)
+            )
+        return results
+
+    def search_vkis_questions(
+        self, questions_path: Path, *, top_k: int = 100, query_root: Path | None = None
+    ) -> dict[str, list[SkillPixelHit]]:
+        questions_path = Path(questions_path)
+        questions = load_skillpixel_questions(questions_path)
+        root = Path(query_root) if query_root is not None else questions_path.parent
+        vkis = []
+        for item in questions:
+            if item.task != "VKIS":
+                continue
+            image_path = Path(item.query_image)
+            if not image_path.is_absolute():
+                image_path = root / image_path
+            vkis.append((item.query_id, image_path))
+        return self.search_image_queries(vkis, top_k=top_k)
