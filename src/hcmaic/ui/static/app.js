@@ -8,6 +8,7 @@ let lastQueryId = null;
 let selectedFrameId = null;
 let lastResultIds = [];
 let queryRevision = 0;
+let kisMode = false;
 const sessionId = "ui-" + Math.random().toString(36).slice(2);
 
 function setStatus(text, isError = false, spinning = false) {
@@ -33,6 +34,7 @@ async function api(path, options) {
 async function loadSystemInfo() {
   try {
     const [health, info] = await Promise.all([api("/health"), api("/system/info")]);
+    kisMode = health.kis_runtime === true;
     $("sysinfo").textContent =
       `${health.index_size} frames · ${health.n_videos} videos · ` +
       `index ${health.index_version} · provider ${health.embedding_provider}`;
@@ -51,6 +53,58 @@ async function loadSystemInfo() {
 
 /* ---------- search ---------- */
 
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Unable to read image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function runKisSearch(query) {
+  const task = $("taskType").value;
+  if (task === "VKIS") {
+    const file = $("queryImage").files[0];
+    if (!file) throw new Error("Choose a query image for VKIS first.");
+    return api("/search/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query_id: "ui-" + Date.now(),
+        image_base64: await fileAsDataUrl(file),
+        top_k: parseInt($("topK").value, 10),
+      }),
+    });
+  }
+  return api("/search/text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query_id: "ui-" + Date.now(),
+      text: query,
+      top_k: parseInt($("topK").value, 10),
+    }),
+  });
+}
+
+function normalizeKisResponse(data) {
+  if (!data.results.length || !data.results[0].frame_uid) return data;
+  return {
+    ...data,
+    total_found: data.results.length,
+    results: data.results.map((result) => ({
+      frame_id: result.frame_uid,
+      image_url: `/frames/${encodeURIComponent(result.frame_uid)}/image`,
+      video_id: result.video_id,
+      frame_idx: result.source_frame_idx,
+      timestamp_ms: result.timestamp_ms,
+      final_score: result.rerank_score ?? result.fused_score,
+      signal_scores: result.channel_scores,
+    })),
+  };
+}
+
 async function runSearch(text) {
   const query = (text ?? $("query").value).trim();
   if (!query) { setStatus("Enter a query first.", true); return; }
@@ -67,11 +121,15 @@ async function runSearch(text) {
   const videoId = $("videoFilter").value;
   if (videoId) body.filters.video_ids = [videoId];
   try {
-    const data = await api("/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const data = normalizeKisResponse(
+      kisMode && ["TKIS", "VKIS"].includes(body.task_type)
+        ? await runKisSearch(query)
+        : await api("/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+    );
     lastQueryId = data.query_id;
     lastResultIds = data.results.map((result) => result.frame_id);
     queryRevision += 1;

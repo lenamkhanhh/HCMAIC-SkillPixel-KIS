@@ -284,6 +284,183 @@ def _cmd_provider_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _kis_runtime(args: argparse.Namespace):
+    from hcmaic.runtime.kis import load_kis_runtime
+
+    return load_kis_runtime(
+        Path(args.index),
+        provider=args.provider,
+        device=args.device,
+        local_files_only=not args.allow_network,
+        batch_size=args.batch_size,
+        ocr_artifact=Path(args.ocr_artifact) if args.ocr_artifact else None,
+        object_artifact=Path(args.object_artifact) if args.object_artifact else None,
+        asr_artifact=Path(args.asr_artifact) if args.asr_artifact else None,
+        asr_enabled=args.asr_enabled,
+    )
+
+
+def _queries_to_kis(questions_path: Path, *, top_k: int):
+    from hcmaic.contracts.kis import KISQuery
+    from hcmaic.skillpixel.retrieval import load_skillpixel_questions
+
+    questions = load_skillpixel_questions(questions_path)
+    queries = []
+    for item in questions:
+        image_path = Path(item.query_image)
+        if item.task == "VKIS" and not image_path.is_absolute():
+            image_path = questions_path.parent / image_path
+        queries.append(
+            KISQuery(
+                query_id=item.query_id,
+                task=item.task,
+                text=item.text or None,
+                image_path=image_path if item.task == "VKIS" else None,
+                top_k=top_k,
+            )
+        )
+    return questions, queries
+
+
+def _write_kis_results(outputs, output_path: Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        for query_id, output in outputs.items():
+            handle.write(
+                json.dumps(
+                    {
+                        "query_id": query_id,
+                        "task": output.query.task,
+                        "answers": [result.to_dict() for result in output.results],
+                        "executed_channels": list(output.executed_channels),
+                        "unavailable_channels": output.unavailable_channels,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return output_path
+
+
+def _cmd_search_kis(args: argparse.Namespace) -> int:
+    from hcmaic.contracts.kis import KISQuery
+
+    try:
+        runtime = _kis_runtime(args)
+        image_path = Path(args.image) if args.image else None
+        query = KISQuery(
+            query_id=args.query_id,
+            task=args.task,
+            text=args.query,
+            image_path=image_path,
+            top_k=args.top_k,
+        )
+        output = runtime.search(query)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "query_id": query.query_id,
+                "task": query.task,
+                "results": [result.to_dict() for result in output.results],
+                "executed_channels": list(output.executed_channels),
+                "unavailable_channels": output.unavailable_channels,
+                "provider": runtime.provider.info(),
+                "quality_status": "UNVALIDATED_ON_HCMAIC",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_retrieve_kis(args: argparse.Namespace) -> int:
+    try:
+        runtime = _kis_runtime(args)
+        questions_path = Path(args.questions)
+        _, queries = _queries_to_kis(questions_path, top_k=args.top_k)
+        outputs = runtime.search_queries(queries)
+        _write_kis_results(outputs, Path(args.results))
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "results": str(args.results),
+                "n_queries": len(outputs),
+                "top_k": args.top_k,
+                "provider": runtime.provider.info(),
+                "channels": runtime.channel_status,
+                "quality_status": "UNVALIDATED_ON_HCMAIC",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_export_kis(args: argparse.Namespace) -> int:
+    from hcmaic.skillpixel.submission import (
+        SubmissionValidationError,
+        export_skillpixel_submission,
+        validate_submission_csv,
+    )
+
+    try:
+        runtime = _kis_runtime(args)
+        questions_path = Path(args.questions)
+        _, queries = _queries_to_kis(questions_path, top_k=100)
+        outputs = runtime.search_queries(queries)
+        results_path = Path(args.output).with_suffix(".kis-results.jsonl")
+        _write_kis_results(outputs, results_path)
+        try:
+            stats = export_skillpixel_submission(
+                questions_path,
+                results_path,
+                Path(args.corpus),
+                Path(args.output),
+            )
+        finally:
+            results_path.unlink(missing_ok=True)
+        validation = validate_submission_csv(Path(args.output), questions_path, Path(args.corpus))
+        if not validation.ok:
+            raise SubmissionValidationError(list(validation.errors))
+    except (FileNotFoundError, RuntimeError, ValueError, SubmissionValidationError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "submission": str(stats.output_path),
+                "n_queries": stats.n_queries,
+                "answers_per_query": stats.answers_per_query,
+                "quality_status": "UNVALIDATED_ON_HCMAIC",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_serve_kis(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from hcmaic.api.kis_app import create_kis_app
+
+    try:
+        runtime = _kis_runtime(args)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    app = create_kis_app(runtime)
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
 def _cmd_scale_benchmark(args: argparse.Namespace) -> int:
     from hcmaic.indexing.scale_benchmark import (
         ScaleBenchmarkConfig,
@@ -393,6 +570,18 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_kis_runtime_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--index", required=True)
+    parser.add_argument("--provider", choices=["auto", "siglip2", "clip"], default="auto")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument("--ocr-artifact")
+    parser.add_argument("--object-artifact")
+    parser.add_argument("--asr-artifact")
+    parser.add_argument("--asr-enabled", action="store_true")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hcmaic", description="HCMAIC keyframe-search MVP"
@@ -484,6 +673,45 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--revision")
     p.add_argument("--allow-network", action="store_true")
     p.set_defaults(func=_cmd_retrieve_skillpixel)
+
+    p = sub.add_parser(
+        "search-kis",
+        help="Search the hybrid raw-video-first KIS runtime for one TKIS/VKIS query",
+    )
+    _add_kis_runtime_args(p)
+    p.add_argument("--task", choices=["TKIS", "VKIS"], required=True)
+    query_group = p.add_mutually_exclusive_group(required=True)
+    query_group.add_argument("--query")
+    query_group.add_argument("--image")
+    p.add_argument("--query-id", default="cli-kis")
+    p.add_argument("--top-k", type=int, default=100)
+    p.set_defaults(func=_cmd_search_kis)
+
+    p = sub.add_parser(
+        "retrieve-kis",
+        help="Run hybrid TKIS/VKIS retrieval from questions.csv and write JSONL",
+    )
+    _add_kis_runtime_args(p)
+    p.add_argument("--questions", required=True)
+    p.add_argument("--results", required=True)
+    p.add_argument("--top-k", type=int, default=100)
+    p.set_defaults(func=_cmd_retrieve_kis)
+
+    p = sub.add_parser(
+        "export-kis",
+        help="Run hybrid KIS and export/validate exactly 100 CSV answers per query",
+    )
+    _add_kis_runtime_args(p)
+    p.add_argument("--questions", required=True)
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--output", required=True)
+    p.set_defaults(func=_cmd_export_kis)
+
+    p = sub.add_parser("serve-kis", help="Serve the hybrid KIS API and operator UI")
+    _add_kis_runtime_args(p)
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=_cmd_serve_kis)
 
     p = sub.add_parser(
         "export-skillpixel",

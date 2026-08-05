@@ -3,24 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HCMAIC keyframe search</title>
+<meta name="description" content="HCMAIC keyframe search and KIS retrieval">
+<title>HCMAIC KIS retrieval</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
-  <h1>HCMAIC keyframe search</h1>
+  <h1>HCMAIC KIS retrieval</h1>
   <span id="sysinfo" class="muted"></span>
 </header>
 
 <section id="controls">
   <input id="query" type="text" placeholder="Describe the moment… (e.g. a solid red keyframe)" autofocus>
   <select id="taskType" title="Task type">
-    <option value="kis" selected>KIS</option>
-    <option value="avs">AVS</option>
-    <option value="qa">QA</option>
-    <option value="kisc">KISC</option>
+    <option value="TKIS" selected>TKIS</option>
+    <option value="VKIS">VKIS</option>
+    <option value="kis">Legacy KIS</option>
   </select>
+  <input id="queryImage" type="file" accept="image/png,image/jpeg" title="VKIS query image">
   <select id="topK" title="Top-K">
     <option>5</option><option selected>10</option><option>20</option><option>50</option>
   </select>

@@ -601,6 +601,37 @@ uv run pytest tests/test_kis_orchestrator.py tests/test_fusion.py tests/test_orc
 uv run ruff check <K7 source/tests> -> pass
 uv run mypy <K7 source> -> pass
 uv run pytest -> 228 passed, 1 warning
+
+### K8 completed — runtime, API/CLI and operator UI execution path
+
+K8 thêm:
+
+- `src/hcmaic/runtime/kis.py` và package init: load exact raw-derived index,
+  matching real local provider, optional OCR/object/ASR artifacts và channel
+  diagnostics; provider selection giữ local-files-only mặc định.
+- `src/hcmaic/api/kis_app.py`: FastAPI app thật cho `/health`, `/system/info`,
+  `/search/text`, `/search/image`, `/search/batch`, frame image/context,
+  `/videos/{video_id}/timeline`, `/submit/preview`, `/feedback` và
+  `/exports/kis`. Export endpoint chạy runtime search rồi gọi exporter/validator
+  top-100 hiện có.
+- `src/hcmaic/cli/main.py`: thêm `search-kis`, `retrieve-kis`, `export-kis`,
+  `serve-kis`; không dùng mock provider và không tự download nếu không bật flag
+  explicit.
+- `src/hcmaic/ui/static/index.html`/`app.js`: UI nhận diện KIS runtime, route
+  TKIS qua text endpoint, VKIS qua ảnh base64, render canonical frame/source
+  mapping và vẫn giữ compatibility với legacy app.
+- `tests/test_kis_api.py` và mở rộng `tests/test_skillpixel_cli.py`: API health,
+  text/image/mixed batch, timeline/image route, invalid image payload và CLI
+  parser contracts.
+
+K8 verification:
+
+```text
+uv run pytest tests/test_kis_api.py tests/test_skillpixel_cli.py -> 3 passed
+uv run ruff check <K8 source/tests> -> pass
+uv run mypy <K8 source> -> pass
+uv run pytest -> 230 passed, 1 warning
+```
 ```
 ```
 ```

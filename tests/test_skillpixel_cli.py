@@ -38,9 +38,51 @@ def test_skillpixel_cli_commands_are_available():
             "submission.csv",
         ]
     )
+    kis_search = parser.parse_args(
+        [
+            "search-kis",
+            "--index",
+            "index",
+            "--task",
+            "TKIS",
+            "--query",
+            "a person",
+        ]
+    )
+    kis_retrieve = parser.parse_args(
+        [
+            "retrieve-kis",
+            "--index",
+            "index",
+            "--questions",
+            "questions.csv",
+            "--results",
+            "results.jsonl",
+        ]
+    )
+    kis_export = parser.parse_args(
+        [
+            "export-kis",
+            "--index",
+            "index",
+            "--questions",
+            "questions.csv",
+            "--corpus",
+            "corpus.csv",
+            "--output",
+            "submission.csv",
+        ]
+    )
+    kis_serve = parser.parse_args(
+        ["serve-kis", "--index", "index", "--port", "8010"]
+    )
 
     assert ingest.command == "ingest-raw"
     assert ingest.stride_frames == 10
     assert build.command == "build-skillpixel-index"
     assert retrieve.command == "retrieve-skillpixel"
     assert export.command == "export-skillpixel"
+    assert kis_search.command == "search-kis"
+    assert kis_retrieve.command == "retrieve-kis"
+    assert kis_export.command == "export-kis"
+    assert kis_serve.command == "serve-kis"
