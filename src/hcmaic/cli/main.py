@@ -3,9 +3,17 @@
 Commands:
   ingest-video  --input <video file|dir> --output <dataset>
                 [--interval 2.0] [--max-frames 500] [--video-id ID] [--force]
+  ingest-raw    --input <raw video file|dir> --output <generated dataset>
+                [--stride-frames 10|12] [--force]
   validate-data --input <dataset>
   build-index   --input <dataset> --output <artifacts>
                 [--provider mock|clip] [--index exact-numpy|faiss]
+  build-skillpixel-index --input <raw-generated dataset> --output <artifacts>
+                [--provider siglip2|clip] [--allow-network]
+  retrieve-skillpixel --index <artifacts> --questions <questions.csv>
+                --results <results.jsonl> [--provider auto|siglip2|clip]
+  export-skillpixel --queries <questions.csv> --results <results.jsonl>
+                --corpus <corpus.csv> --output <submission.csv>
   search        --index <artifacts> --query "<text>" [--top-k 10] [--video-id V1,V2]
   serve         --index <artifacts> [--host 127.0.0.1] [--port 8000] [--data-root <path>]
   evaluate      --index <artifacts> --queries <queries.jsonl> --qrels <qrels.jsonl> [--out <dir>]
@@ -55,6 +63,35 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
             f"uv run hcmaic build-index --input {args.output} --output <artifacts>"
         )
     return 0 if not failures else 1
+
+
+def _cmd_ingest_raw(args: argparse.Namespace) -> int:
+    from hcmaic.skillpixel.raw import RawIngestError, ingest_raw_videos, validate_raw_dataset
+
+    try:
+        report = ingest_raw_videos(
+            Path(args.input),
+            Path(args.output),
+            stride_frames=args.stride_frames,
+            force=args.force,
+        )
+        stats = validate_raw_dataset(Path(args.output))
+    except RawIngestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "output": str(args.output),
+                "n_videos": report.n_videos,
+                "n_frames": stats.n_frames,
+                "sampling_policy": report.sampling_policy,
+                "dataset_manifest": str(Path(args.output) / "dataset_manifest.json"),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -108,6 +145,133 @@ def _cmd_build_index(args: argparse.Namespace) -> int:
         f"index {args.index}."
     )
     return 0
+
+
+def _cmd_build_skillpixel_index(args: argparse.Namespace) -> int:
+    from hcmaic.embedding.factory import get_real_visual_provider
+    from hcmaic.skillpixel.index import build_skillpixel_index
+
+    try:
+        provider, selection = get_real_visual_provider(
+            prefer=args.provider,
+            device=args.device,
+            local_files_only=not args.allow_network,
+            batch_size=args.batch_size,
+        )
+        index = build_skillpixel_index(Path(args.input), Path(args.output), provider)
+    except (RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "artifact_dir": str(args.output),
+                "n_frames": index.size,
+                "dimension": index.dimension,
+                "provider": provider.info(),
+                "selection": selection,
+                "index_provider": "faiss-flat-ip",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_retrieve_skillpixel(args: argparse.Namespace) -> int:
+    from hcmaic.embedding.factory import get_real_visual_provider
+    from hcmaic.skillpixel.index import load_skillpixel_index
+    from hcmaic.skillpixel.retrieval import SkillPixelRetriever, load_skillpixel_questions
+    from hcmaic.skillpixel.submission import write_results_jsonl
+
+    index = load_skillpixel_index(Path(args.index))
+    expected_provider = str(index.provider_info.get("provider", ""))
+    prefer = expected_provider if args.provider == "auto" else args.provider
+    if prefer not in {"siglip2", "clip"}:
+        print(f"error: unsupported index provider {expected_provider!r}", file=sys.stderr)
+        return 2
+    try:
+        provider, selection = get_real_visual_provider(
+            prefer=prefer,
+            device=args.device,
+            local_files_only=not args.allow_network,
+            revision=args.revision or index.provider_info.get("model_revision"),
+            batch_size=args.batch_size,
+        )
+        retriever = SkillPixelRetriever(index, provider)
+        questions_path = Path(args.questions)
+        questions = load_skillpixel_questions(questions_path)
+        tkis = retriever.search_text_queries(
+            [(item.query_id, item.text) for item in questions if item.task == "TKIS"],
+            top_k=args.top_k,
+        )
+        vkis = retriever.search_image_queries(
+            [
+                (
+                    item.query_id,
+                    Path(item.query_image)
+                    if Path(item.query_image).is_absolute()
+                    else questions_path.parent / item.query_image,
+                )
+                for item in questions
+                if item.task == "VKIS"
+            ],
+            top_k=args.top_k,
+        )
+        ordered = {
+            item.query_id: (tkis if item.task == "TKIS" else vkis)[item.query_id]
+            for item in questions
+        }
+        write_results_jsonl(ordered, Path(args.results))
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "results": str(args.results),
+                "n_queries": len(ordered),
+                "top_k": args.top_k,
+                "provider": provider.info(),
+                "selection": selection,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_export_skillpixel(args: argparse.Namespace) -> int:
+    from hcmaic.skillpixel.submission import (
+        SubmissionValidationError,
+        export_skillpixel_submission,
+        validate_submission_csv,
+    )
+
+    try:
+        stats = export_skillpixel_submission(
+            Path(args.queries),
+            Path(args.results),
+            Path(args.corpus),
+            Path(args.output),
+        )
+    except (FileNotFoundError, SubmissionValidationError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    report = validate_submission_csv(Path(args.output), Path(args.queries), Path(args.corpus))
+    print(
+        json.dumps(
+            {
+                "submission": str(stats.output_path),
+                "n_queries": stats.n_queries,
+                "answers_per_query": stats.answers_per_query,
+                "valid": report.ok,
+                "errors": list(report.errors),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0 if report.ok else 1
 
 
 def _cmd_provider_doctor(args: argparse.Namespace) -> int:
@@ -258,6 +422,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=_cmd_ingest)
 
+    p = sub.add_parser(
+        "ingest-raw",
+        help="Extract dense source-frame-stride images from raw videos",
+    )
+    p.add_argument("--input", required=True)
+    p.add_argument("--output", required=True)
+    p.add_argument("--stride-frames", type=int, choices=[10, 12], default=10)
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=_cmd_ingest_raw)
+
     p = sub.add_parser("validate-data", help="Validate a dataset directory")
     p.add_argument("--input", required=True)
     p.add_argument("--report", help="Path for validation_report.json")
@@ -279,6 +453,47 @@ def build_parser() -> argparse.ArgumentParser:
         default="exact-numpy",
     )
     p.set_defaults(func=_cmd_build_index)
+
+    p = sub.add_parser(
+        "build-skillpixel-index",
+        help="Build a real-provider SkillPixel FAISS FlatIP index from raw frames",
+    )
+    p.add_argument("--input", required=True)
+    p.add_argument("--output", required=True)
+    p.add_argument("--provider", choices=["siglip2", "clip"], default="siglip2")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="Permit model fetches; default is local-files-only",
+    )
+    p.set_defaults(func=_cmd_build_skillpixel_index)
+
+    p = sub.add_parser(
+        "retrieve-skillpixel",
+        help="Run batched TKIS/VKIS retrieval from a persisted SkillPixel index",
+    )
+    p.add_argument("--index", required=True)
+    p.add_argument("--questions", required=True)
+    p.add_argument("--results", required=True)
+    p.add_argument("--provider", choices=["auto", "siglip2", "clip"], default="auto")
+    p.add_argument("--top-k", type=int, default=100)
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--revision")
+    p.add_argument("--allow-network", action="store_true")
+    p.set_defaults(func=_cmd_retrieve_skillpixel)
+
+    p = sub.add_parser(
+        "export-skillpixel",
+        help="Validate and export exactly 100 answers per SkillPixel query",
+    )
+    p.add_argument("--queries", required=True)
+    p.add_argument("--results", required=True)
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--output", required=True)
+    p.set_defaults(func=_cmd_export_skillpixel)
 
     p = sub.add_parser(
         "provider-doctor",
