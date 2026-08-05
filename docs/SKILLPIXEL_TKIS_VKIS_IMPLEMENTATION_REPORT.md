@@ -549,6 +549,30 @@ uv run pytest tests/test_object_retrieval.py -> 4 passed
 uv run ruff check <object source/tests>     -> pass
 uv run mypy src/hcmaic/retrieval/object_retrieval.py -> pass
 uv run pytest                               -> 221 passed, 1 warning
+
+### K6 completed — optional timestamped ASR with promotion gate
+
+K6 thêm `src/hcmaic/retrieval/asr.py` và `tests/test_asr.py`:
+
+- `ASRRecord` giữ segment start/end, anchor timestamp và source-frame mapping;
+  `asr.jsonl`/`asr_manifest.json` được canonicalize/hash và fail-closed với
+  BTC artifact, sai dataset hash, duplicate segment, non-finite metadata hoặc
+  mock provider.
+- `ASRRetrievalChannel` trả evidence timestamped theo label/token match, nhưng
+  không tự quyết định bật channel.
+- `decide_asr_promotion` chỉ bật ASR khi có HCMAIC qrels và paired benchmark
+  chứng minh gain tối thiểu; thiếu qrels/score/gain đều giữ disabled.
+- Whisper/faster-whisper và model weights chưa có cache; không sinh ASR artifact
+  production, không tự tải model. Runtime status sẽ là unavailable/disabled.
+
+K6 verification:
+
+```text
+uv run pytest tests/test_asr.py -> 3 passed
+uv run ruff check <ASR source/tests> -> pass
+uv run mypy src/hcmaic/retrieval/asr.py -> pass
+uv run pytest -> 224 passed, 1 warning
+```
 ```
 ```
 ```
