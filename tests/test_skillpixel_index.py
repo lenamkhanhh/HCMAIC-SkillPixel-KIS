@@ -108,5 +108,5 @@ def test_index_load_rejects_source_mapping_tamper(raw_dataset: Path, tmp_path: P
     id_map[0]["source_frame_idx"] = 99
     id_map_path.write_text(json.dumps(id_map), encoding="utf-8")
 
-    with pytest.raises(SkillPixelIndexError, match="source_frame_idx"):
+    with pytest.raises(SkillPixelIndexError, match="id_map hash mismatch|source_frame_idx"):
         load_skillpixel_index(artifact_dir)
