@@ -475,4 +475,30 @@ uv run pytest                                                        -> 211 pass
 Benchmark không tự đọc fixture/BTC qrels. Checkout hiện chưa có HCMAIC qrels
 chính thức, nên quality status vẫn là `UNVALIDATED_ON_HCMAIC`; K2 chỉ cung cấp
 latency/provider/index evidence, không claim Recall/MRR contest.
+
+### K3 completed — unified TKIS/VKIS visual routing
+
+K3 thêm vào `src/hcmaic/skillpixel/retrieval.py`:
+
+- `search_kis(KISQuery)`: một entry point canonical cho TKIS hoặc VKIS.
+- `search_kis_queries(list[KISQuery])`: gom batch theo tower, giữ nguyên
+  `query_id` và thứ tự input, nhưng vẫn dùng chung visual image index.
+- Chuyển `SkillPixelHit` thành `KISResult` + `Evidence`, giữ đồng thời
+  `frame_uid`, `video_id`, `video_filename`, `source_frame_idx`, timestamp,
+  `faiss_row`/`feature_row` chỉ trong evidence metadata.
+- `answer_cell` của result chỉ dùng `video_filename,source_frame_idx`; không
+  dùng `faiss_row` hay keyframe ordinal làm submission identity.
+
+Test mới: `tests/test_kis_routing.py` xác nhận một batch mixed TKIS/VKIS gọi
+đúng text/image tower, preserving order/query IDs, giới hạn top-k từng query,
+và round-trip canonical evidence.
+
+K3 verification:
+
+```text
+uv run pytest tests/test_kis_routing.py tests/test_skillpixel_tkis.py tests/test_skillpixel_vkis.py -> 7 passed
+uv run ruff check src/hcmaic/skillpixel/retrieval.py tests/test_kis_routing.py                  -> pass
+uv run mypy src/hcmaic/skillpixel/retrieval.py                                                  -> pass
+uv run pytest                                                                                    -> 213 passed, 1 warning
+```
 ```

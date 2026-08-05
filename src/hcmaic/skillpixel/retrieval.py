@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from hcmaic.contracts.kis import Evidence, KISQuery, KISResult
 from hcmaic.embedding.base import EmbeddingProvider
 from hcmaic.skillpixel.index import SkillPixelIndex, load_skillpixel_index
 
@@ -90,7 +91,7 @@ def load_skillpixel_questions(path: Path) -> list[SkillPixelQuestion]:
 
 
 class SkillPixelRetriever:
-    """Shared visual index service; P0-D exposes the text tower for TKIS."""
+    """Shared visual index service for both TKIS and VKIS query towers."""
 
     def __init__(self, index: SkillPixelIndex, provider: EmbeddingProvider) -> None:
         expected = index.provider_info
@@ -232,3 +233,83 @@ class SkillPixelRetriever:
                 image_path = root / image_path
             vkis.append((item.query_id, image_path))
         return self.search_image_queries(vkis, top_k=top_k)
+
+    def _to_kis_results(
+        self, query: KISQuery, hits: list[SkillPixelHit]
+    ) -> list[KISResult]:
+        """Convert visual hits to the canonical KIS result/evidence envelope."""
+        results: list[KISResult] = []
+        for hit in hits[: query.top_k]:
+            results.append(
+                KISResult(
+                    query_id=query.query_id,
+                    task=query.task,
+                    rank=hit.rank,
+                    frame_uid=hit.frame_uid,
+                    video_id=hit.video_id,
+                    video_filename=hit.video_filename,
+                    source_frame_idx=hit.source_frame_idx,
+                    timestamp_ms=hit.timestamp_ms,
+                    channel_scores={"visual": hit.visual_score},
+                    fused_score=hit.visual_score,
+                    evidence=(
+                        Evidence(
+                            channel="visual",
+                            frame_uid=hit.frame_uid,
+                            video_id=hit.video_id,
+                            video_filename=hit.video_filename,
+                            source_frame_idx=hit.source_frame_idx,
+                            timestamp_ms=hit.timestamp_ms,
+                            score=hit.visual_score,
+                            rank=hit.rank,
+                            evidence_level="REAL_PROVIDER",
+                            text=query.text if query.is_text else None,
+                            metadata={
+                                "provider": self.provider.name,
+                                "image_path": hit.image_path,
+                                "faiss_row": hit.faiss_row,
+                                "feature_row": hit.feature_row,
+                            },
+                        ),
+                    ),
+                    executed_channels=("visual",),
+                    evidence_level="REAL_PROVIDER",
+                    quality_status="UNVALIDATED_ON_HCMAIC",
+                )
+            )
+        return results
+
+    def search_kis(self, query: KISQuery) -> list[KISResult]:
+        """Route one canonical TKIS/VKIS query through the visual index."""
+        return self.search_kis_queries([query])[query.query_id]
+
+    def search_kis_queries(
+        self, queries: list[KISQuery]
+    ) -> dict[str, list[KISResult]]:
+        """Batch mixed TKIS/VKIS queries and preserve the original query order."""
+        if not queries:
+            return {}
+        query_ids = [query.query_id for query in queries]
+        if len(query_ids) != len(set(query_ids)):
+            raise ValueError("KIS query_id values must be unique")
+
+        tkis = [query for query in queries if query.is_text]
+        vkis = [query for query in queries if not query.is_text]
+        hits_by_query: dict[str, list[SkillPixelHit]] = {}
+        if tkis:
+            text_hits = self.search_text_queries(
+                [(query.query_id, query.text or "") for query in tkis],
+                top_k=max(query.top_k for query in tkis),
+            )
+            hits_by_query.update(text_hits)
+        if vkis:
+            image_hits = self.search_image_queries(
+                [(query.query_id, query.image_path or Path("")) for query in vkis],
+                top_k=max(query.top_k for query in vkis),
+            )
+            hits_by_query.update(image_hits)
+
+        return {
+            query.query_id: self._to_kis_results(query, hits_by_query[query.query_id])
+            for query in queries
+        }
