@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,10 @@ class ChannelHit:
     rank: int
     provider: str
     evidence_text: str | None = None
+    frame_uid: str | None = None
+    video_filename: str | None = None
+    source_frame_idx: int | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -28,3 +33,7 @@ class FusedCandidate:
     evidence_texts: dict[str, str] = field(default_factory=dict)
     contributing_providers: list[str] = field(default_factory=list)
     explanation: dict[str, str | float] = field(default_factory=dict)
+    frame_uid: str | None = None
+    video_filename: str | None = None
+    source_frame_idx: int | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)

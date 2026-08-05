@@ -1,5 +1,12 @@
 """Typed data contracts shared by every module."""
 
+from hcmaic.contracts.kis import (
+    Evidence,
+    KISChannelConfig,
+    KISPipelineConfig,
+    KISQuery,
+    KISResult,
+)
 from hcmaic.contracts.models import (
     CanonicalSubmission,
     FrameRecord,
@@ -16,4 +23,9 @@ __all__ = [
     "SearchResult",
     "ValidationIssue",
     "ValidationReport",
+    "Evidence",
+    "KISChannelConfig",
+    "KISPipelineConfig",
+    "KISQuery",
+    "KISResult",
 ]
