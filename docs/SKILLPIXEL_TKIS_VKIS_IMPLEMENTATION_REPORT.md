@@ -739,13 +739,31 @@ Model/provider decision and limitations:
 
 Rollback and commit history:
 
-- Foundation rollback point: `c875d43` (`test(skillpixel): verify TKIS VKIS submission pipeline`).
+- Foundation rollback point: `c875d43` (pre-KIS implementation baseline).
 - K0–K9 commits are listed by `git log --oneline`; K10 final verification commit
-  is created only after the post-edit full test/lint/type-check gate.
+  is `77e4028` (`test(skillpixel): verify TKIS VKIS submission pipeline`). It was
+  created only after the post-edit full test/lint/type-check gate.
 - Rollback must use explicit `git revert` of the K10/K9… commits in reverse order;
   no reset/checkout/destructive cleanup was used.
 
-Push/PR status: pending final Git identity/remote check and `staging HEAD` push.
+Git identity/remote verification:
+
+- `git config user.name` = `Khanhdz`.
+- `git config user.email` = `lenamkhanh07082007@gmail.com`; identity was not changed.
+- `git remote -v` confirmed the requested `staging` remote points to
+  `https://github.com/lenamkhanhh/HCMAIC-2026-system`.
+- `gh auth status` confirmed the logged-in GitHub account is `lenamkhanhh`.
+  The optional `gh api user/emails` check was unavailable because the token lacks
+  the `user` scope; this did not block the successful push.
+
+Push/PR status:
+
+- `git push -u staging HEAD` succeeded for
+  `feat/skillpixel-tkis-vkis`.
+- Draft PR created, not merged:
+  `https://github.com/lenamkhanhh/HCMAIC-2026-system/pull/1`
+- PR base is `hcmaic-2026-foundation`; PR head is
+  `feat/skillpixel-tkis-vkis`.
 ```
 ```
 ```
