@@ -500,5 +500,31 @@ uv run pytest tests/test_kis_routing.py tests/test_skillpixel_tkis.py tests/test
 uv run ruff check src/hcmaic/skillpixel/retrieval.py tests/test_kis_routing.py                  -> pass
 uv run mypy src/hcmaic/skillpixel/retrieval.py                                                  -> pass
 uv run pytest                                                                                    -> 213 passed, 1 warning
+
+### K4 completed — raw-derived OCR artifact and BM25 channel
+
+K4 thêm `src/hcmaic/retrieval/ocr_bm25.py` và `tests/test_ocr_bm25.py`:
+
+- `OCRRecord` giữ `frame_uid`, `video_id`, `video_filename`,
+  `source_frame_idx`, timestamp, text, provider và revision.
+- `ocr.jsonl` được canonicalize/hash cùng `ocr_manifest.json`; loader fail-closed
+  nếu sai dataset hash, hash record, raw/BTC provenance, provider execution,
+  provider/revision hoặc có duplicate frame.
+- Chuẩn hóa OCR gồm lowercase/casefold, bỏ dấu tiếng Việt, token boundary,
+  compact form để chịu lỗi tách khoảng trắng OCR.
+- `BM25OCRChannel` hỗ trợ BM25 exact term, phrase boost và proximity boost;
+  kết quả trả `ChannelHit` với source-frame mapping và evidence metadata.
+- Mock OCR bị từ chối ở record, writer và loader. Không có PaddleOCR/model cache
+  trong môi trường hiện tại, nên production OCR artifact chưa được sinh; channel
+  runtime phải báo unavailable, không tự tải model và không sinh mock score.
+
+K4 verification:
+
+```text
+uv run pytest tests/test_ocr_bm25.py -> 4 passed
+uv run ruff check <OCR source/tests> -> pass
+uv run mypy src/hcmaic/retrieval/ocr_bm25.py -> pass
+uv run pytest -> 217 passed, 1 warning
+```
 ```
 ```
