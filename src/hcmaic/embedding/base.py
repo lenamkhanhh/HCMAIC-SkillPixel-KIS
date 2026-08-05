@@ -29,6 +29,16 @@ class EmbeddingProvider(ABC):
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Return float32 [len(texts), dimension], rows L2-normalized."""
 
+    def embed_query_image(self, path: Path) -> np.ndarray:
+        """Encode one query image with the same image tower as catalog images."""
+        result = self.embed_images([Path(path)])
+        if result.shape != (1, self.dimension):
+            raise ValueError(
+                f"query image provider returned {result.shape}; expected "
+                f"(1, {self.dimension})"
+            )
+        return result
+
     def info(self) -> dict[str, Any]:
         """Provider description recorded in index_manifest.json."""
         return {

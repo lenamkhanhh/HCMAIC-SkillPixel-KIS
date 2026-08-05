@@ -22,7 +22,15 @@ CPU_BATCH = 16
 class RealClipEmbeddingProvider(EmbeddingProvider):
     name = "clip"
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_MODEL,
+        device: str | None = None,
+        *,
+        local_files_only: bool = True,
+        revision: str | None = None,
+        batch_size: int | None = None,
+    ) -> None:
         try:
             import torch
             from transformers import CLIPModel, CLIPProcessor
@@ -34,11 +42,30 @@ class RealClipEmbeddingProvider(EmbeddingProvider):
 
         self._torch = torch
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._batch = CUDA_BATCH if self._device.startswith("cuda") else CPU_BATCH
+        default_batch = CUDA_BATCH if self._device.startswith("cuda") else CPU_BATCH
+        self._batch = batch_size or default_batch
+        if self._batch < 1:
+            raise ValueError("batch_size must be >= 1")
         self._model_name = model_name
-        self.version = f"clip:{model_name}"
-        self._model = CLIPModel.from_pretrained(model_name).to(self._device).eval()
-        self._processor = CLIPProcessor.from_pretrained(model_name)
+        self._local_files_only = local_files_only
+        load_kwargs: dict[str, Any] = {"local_files_only": local_files_only}
+        if revision is not None:
+            load_kwargs["revision"] = revision
+        try:
+            self._model = CLIPModel.from_pretrained(model_name, **load_kwargs).to(
+                self._device
+            ).eval()
+            self._processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
+        except OSError as exc:
+            mode = "local cache" if local_files_only else "configured model source"
+            raise RuntimeError(
+                f"Real CLIP model {model_name!r} is unavailable from {mode}; "
+                "cache the model first or pass local_files_only=False explicitly."
+            ) from exc
+        self._revision = (
+            getattr(self._model.config, "_commit_hash", None) or revision or "main"
+        )
+        self.version = f"clip:{model_name}@{self._revision}"
         self._dimension = int(self._model.config.projection_dim)
 
     @property
@@ -50,8 +77,14 @@ class RealClipEmbeddingProvider(EmbeddingProvider):
         data.update(
             {
                 "model_name": self._model_name,
+                "model_revision": self._revision,
+                "revision": self._revision,
                 "device": self._device,
                 "batch_size": self._batch,
+                "dtype": str(next(self._model.parameters()).dtype),
+                "local_files_only": self._local_files_only,
+                "preprocessing": "CLIPProcessor RGB resize/crop 224px",
+                "evidence_level": "REAL_PROVIDER",
             }
         )
         return data
