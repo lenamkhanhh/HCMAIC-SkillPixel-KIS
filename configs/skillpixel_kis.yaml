@@ -13,3 +13,14 @@ revision: ${SKILLPIXEL_MODEL_REVISION:-}
 device: ${SKILLPIXEL_DEVICE:-cpu}
 batch_size: 32
 local_files_only: ${SKILLPIXEL_LOCAL_FILES_ONLY:-true}
+allow_model_download: ${SKILLPIXEL_ALLOW_MODEL_DOWNLOAD:-false}
+ocr_model_version: ${SKILLPIXEL_OCR_MODEL_VERSION:-PP-OCRv6}
+ocr_model_path: ${SKILLPIXEL_OCR_MODEL_PATH:-}
+ocr_batch_size: 1
+object_model: ${SKILLPIXEL_OBJECT_MODEL:-yolo11n.pt}
+object_model_path: ${SKILLPIXEL_OBJECT_MODEL_PATH:-}
+object_confidence: 0.25
+object_batch_size: ${SKILLPIXEL_OBJECT_BATCH_SIZE:-8}
+asr_model: ${SKILLPIXEL_ASR_MODEL:-small}
+asr_model_path: ${SKILLPIXEL_ASR_MODEL_PATH:-}
+asr_compute_type: ${SKILLPIXEL_ASR_COMPUTE_TYPE:-int8}

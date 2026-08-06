@@ -242,6 +242,106 @@ def _visual_stage(config: dict[str, Any]) -> Path:
     return index_dir
 
 
+def _optional_path(config: dict[str, Any], key: str) -> Path | None:
+    value = str(config.get(key, "")).strip()
+    return Path(value) if value else None
+
+
+def _channel_output_dir(config: dict[str, Any], channel: str) -> Path:
+    configured = str(config.get(f"{channel}_artifact", "")).strip()
+    if configured:
+        return Path(configured)
+    version = str(config.get(f"{channel}_version", "V1")).strip() or "V1"
+    return _run_root(config) / "channels" / channel / version
+
+
+def _channel_stage(
+    config: dict[str, Any],
+    channel: str,
+    *,
+    allow_model_download: bool | None = None,
+) -> Any:
+    """Run one optional channel using only generated raw frames and explicit providers."""
+    from hcmaic.retrieval.channel_runner import (
+        build_asr_channel,
+        build_object_channel,
+        build_ocr_channel,
+    )
+    from hcmaic.retrieval.real_channels import (
+        FasterWhisperProvider,
+        PaddleOCRFrameProvider,
+        UltralyticsObjectProvider,
+    )
+
+    raw_root = _run_root(config) / "raw"
+    if not raw_root.is_dir():
+        raise FileNotFoundError(f"catalog stage is required first: {raw_root}")
+    download = (
+        _as_bool(config.get("allow_model_download"), default=False)
+        if allow_model_download is None
+        else allow_model_download
+    )
+    device = str(config.get("device", "cpu"))
+    batch_size = int(config.get("batch_size", 32))
+    output_dir = _channel_output_dir(config, channel)
+    if channel == "ocr":
+        provider: Any = PaddleOCRFrameProvider(
+            model_version=str(config.get("ocr_model_version", "PP-OCRv6")),
+            model_path=_optional_path(config, "ocr_model_path"),
+            device=device,
+            allow_model_download=download,
+        )
+        result = build_ocr_channel(
+            raw_root,
+            output_dir,
+            provider,
+            batch_size=int(config.get("ocr_batch_size", 1)),
+        )
+    elif channel == "object":
+        provider = UltralyticsObjectProvider(
+            model=str(config.get("object_model", "yolo11n.pt")),
+            model_path=_optional_path(config, "object_model_path"),
+            device=device,
+            confidence_threshold=float(config.get("object_confidence", 0.25)),
+            allow_model_download=download,
+        )
+        result = build_object_channel(
+            raw_root,
+            output_dir,
+            provider,
+            batch_size=int(config.get("object_batch_size", batch_size)),
+        )
+    elif channel == "asr":
+        provider = FasterWhisperProvider(
+            model=str(config.get("asr_model", "small")),
+            model_path=_optional_path(config, "asr_model_path"),
+            device=device,
+            compute_type=str(config.get("asr_compute_type", "int8")),
+            allow_model_download=download,
+        )
+        raw_input = Path(str(config.get("raw_input", "")))
+        video_root = raw_input if raw_input.is_dir() else None
+        result = build_asr_channel(raw_root, output_dir, provider, video_root=video_root)
+    else:  # pragma: no cover - argparse/config guard
+        raise ValueError(f"unsupported channel stage: {channel}")
+    print(
+        json.dumps(
+            {
+                "stage": channel,
+                "status": result.status,
+                "artifact_dir": str(result.artifact_dir) if result.artifact_dir else None,
+                "manifest": str(result.manifest_path),
+                "dataset_hash": result.dataset_hash,
+                "n_input_frames": result.n_input_frames,
+                "n_records": result.n_records,
+                "details": result.details,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
@@ -251,6 +351,11 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
     )
     parser.add_argument("--model-id")
+    parser.add_argument(
+        "--allow-model-download",
+        action="store_true",
+        help="Explicitly permit the selected real optional provider to download weights",
+    )
     args = parser.parse_args(argv)
     try:
         config = load_skillpixel_config(args.config)
@@ -261,9 +366,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.stage == "visual":
             _visual_stage(config)
         else:
-            raise RuntimeError(
-                f"{args.stage} stage has no validated real provider in this checkout; "
-                "no mock artifact was written"
+            _channel_stage(
+                config,
+                args.stage,
+                allow_model_download=args.allow_model_download,
             )
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)

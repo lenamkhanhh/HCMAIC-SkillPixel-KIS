@@ -7,7 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.skillpixel_kis_build import load_skillpixel_config, provider_model_kwargs
+from scripts.skillpixel_kis_build import (
+    _channel_output_dir,
+    _channel_stage,
+    load_skillpixel_config,
+    provider_model_kwargs,
+)
 from scripts.skillpixel_kis_kaggle_kernel import (
     _device_from_probe,
     _resolve_input_path,
@@ -39,6 +44,66 @@ def test_runner_model_mapping_is_explicit_and_no_fallback():
         "siglip2_model": "/models/siglip2",
         "allow_fallback": False,
     }
+
+
+def test_optional_channel_stage_wiring_is_explicit_and_versioned(tmp_path: Path, monkeypatch):
+    raw_root = tmp_path / "run" / "raw"
+    raw_root.mkdir(parents=True)
+    output_dir = tmp_path / "run" / "channels" / "ocr" / "V2"
+    captured = {}
+
+    class FakeOCRProvider:
+        def __init__(self, **kwargs):
+            captured["provider"] = kwargs
+
+    class FakeResult:
+        status = "built"
+        artifact_dir = output_dir
+        manifest_path = output_dir / "channel_stage_manifest.json"
+        dataset_hash = "raw-hash"
+        n_input_frames = 3
+        n_records = 2
+        details = {"provider": "fake-real-ocr"}
+
+    def fake_build(raw, output, provider, *, batch_size):
+        captured["build"] = {
+            "raw": raw,
+            "output": output,
+            "provider": provider,
+            "batch_size": batch_size,
+        }
+        return FakeResult()
+
+    monkeypatch.setattr(
+        "hcmaic.retrieval.real_channels.PaddleOCRFrameProvider", FakeOCRProvider
+    )
+    monkeypatch.setattr("hcmaic.retrieval.channel_runner.build_ocr_channel", fake_build)
+
+    result = _channel_stage(
+        {
+            "run_root": str(tmp_path / "run"),
+            "ocr_version": "V2",
+            "ocr_model_path": str(tmp_path / "ocr-model"),
+            "device": "cpu",
+            "ocr_batch_size": 4,
+        },
+        "ocr",
+        allow_model_download=False,
+    )
+
+    assert _channel_output_dir(
+        {"run_root": str(tmp_path / "run"), "ocr_version": "V2"}, "ocr"
+    ) == output_dir
+    assert captured["provider"] == {
+        "model_version": "PP-OCRv6",
+        "model_path": tmp_path / "ocr-model",
+        "device": "cpu",
+        "allow_model_download": False,
+    }
+    assert captured["build"]["raw"] == raw_root
+    assert captured["build"]["output"] == output_dir
+    assert captured["build"]["batch_size"] == 4
+    assert result.status == "built"
     assert provider_model_kwargs("clip", "/models/clip") == {
         "clip_model": "/models/clip",
         "allow_fallback": False,
