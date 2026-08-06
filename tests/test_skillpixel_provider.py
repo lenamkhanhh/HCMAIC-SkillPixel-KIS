@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.embedding.factory import get_real_visual_provider
+from hcmaic.embedding.siglip2 import _configured_dimension
 
 
 class _RecordingProvider(EmbeddingProvider):
@@ -24,6 +26,16 @@ class _RecordingProvider(EmbeddingProvider):
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         return l2_normalize(np.ones((len(texts), 3), dtype=np.float32))
+
+
+def test_siglip2_dimension_accepts_projection_size_config():
+    config = SimpleNamespace(
+        projection_dim=None,
+        vision_config=SimpleNamespace(projection_dim=None),
+        text_config=SimpleNamespace(projection_dim=None, projection_size=768),
+    )
+
+    assert _configured_dimension(config) == 768
 
 
 def test_provider_boundary_normalizes_float32_and_supports_query_image(tmp_path: Path):
