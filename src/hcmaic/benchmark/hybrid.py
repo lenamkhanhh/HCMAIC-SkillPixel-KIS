@@ -30,6 +30,9 @@ from hcmaic.skillpixel.submission import (
 )
 
 QUALITY_STATUS = "UNVALIDATED_ON_HCMAIC"
+_MUTABLE_HYBRID_FILES = frozenset(
+    {"checksums.sha256", "inference_manifest.json", "validation_final.json"}
+)
 
 
 def _write_hybrid_checksums(output_dir: Path) -> Path:
@@ -37,7 +40,7 @@ def _write_hybrid_checksums(output_dir: Path) -> Path:
     checksum_path = Path(output_dir) / "checksums.sha256"
     lines = []
     for path in sorted(Path(output_dir).iterdir()):
-        if not path.is_file() or path == checksum_path:
+        if not path.is_file() or path.name in _MUTABLE_HYBRID_FILES:
             continue
         lines.append(f"{_sha256_file(path)}  {path.name}")
     checksum_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")

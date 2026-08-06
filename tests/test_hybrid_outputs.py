@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hcmaic.benchmark.hybrid import benchmark_runtime_candidate
+from hcmaic.benchmark.hybrid import _write_hybrid_checksums, benchmark_runtime_candidate
 from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.retrieval.ocr_bm25 import BM25OCRChannel, OCRRecord, write_ocr_artifact
@@ -115,3 +115,20 @@ def test_runtime_fusion_exports_channel_scores_and_submission(tmp_path: Path) ->
     assert any(item["ocr_score"] is not None for item in tkis_rows)
     assert all(item["rrf_score"] is not None for item in evidence_rows)
     assert (tmp_path / "out" / "submission.csv").is_file()
+
+
+def test_hybrid_checksums_exclude_manifests_written_after_benchmark(tmp_path: Path) -> None:
+    (tmp_path / "stable.json").write_text("stable\n", encoding="utf-8")
+    (tmp_path / "inference_manifest.json").write_text("before\n", encoding="utf-8")
+    (tmp_path / "validation_final.json").write_text("before\n", encoding="utf-8")
+
+    checksum_path = _write_hybrid_checksums(tmp_path)
+    first = checksum_path.read_text(encoding="utf-8")
+
+    (tmp_path / "inference_manifest.json").write_text("after\n", encoding="utf-8")
+    (tmp_path / "validation_final.json").write_text("after\n", encoding="utf-8")
+
+    assert checksum_path.read_text(encoding="utf-8") == first
+    assert "stable.json" in first
+    assert "inference_manifest.json" not in first
+    assert "validation_final.json" not in first
