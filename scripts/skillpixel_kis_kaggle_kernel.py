@@ -30,7 +30,35 @@ def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | N
 
 def _ensure_dependency(module: str, package: str) -> None:
     if importlib.util.find_spec(module) is None:
+        print(json.dumps({"installing_dependency": package}))
         _run([sys.executable, "-m", "pip", "install", "--quiet", package])
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _run_optional(
+    command: list[str], *, cwd: Path, env: dict[str, str], channel: str
+) -> bool:
+    try:
+        _run(command, cwd=cwd, env=env)
+    except subprocess.CalledProcessError as exc:
+        print(
+            json.dumps(
+                {
+                    "optional_channel": channel,
+                    "status": "unavailable",
+                    "error": type(exc).__name__,
+                    "returncode": exc.returncode,
+                }
+            )
+        )
+        return False
+    return True
 
 
 def _ensure_repository() -> Path:
@@ -154,6 +182,17 @@ def main() -> int:
     _ensure_dependency("faiss", "faiss-cpu>=1.8")
     _ensure_dependency("cv2", "opencv-python-headless>=4.9")
     _ensure_dependency("huggingface_hub", "huggingface_hub>=0.24")
+    run_ocr = _env_flag("SKILLPIXEL_RUN_OCR", default=True)
+    run_object = _env_flag("SKILLPIXEL_RUN_OBJECT", default=True)
+    run_asr = _env_flag("SKILLPIXEL_RUN_ASR", default=False)
+    allow_optional_download = _env_flag("SKILLPIXEL_ALLOW_MODEL_DOWNLOAD", default=True)
+    if run_ocr:
+        _ensure_dependency("paddle", "paddlepaddle>=3.0")
+        _ensure_dependency("paddleocr", "paddleocr>=3.0")
+    if run_object:
+        _ensure_dependency("ultralytics", "ultralytics>=8.3")
+    if run_asr:
+        _ensure_dependency("faster_whisper", "faster-whisper>=1.1")
     repository = _ensure_repository()
     env = os.environ.copy()
     source_path = str(repository / "src")
@@ -184,6 +223,7 @@ def main() -> int:
             "SKILLPIXEL_SIGLIP2_MODEL": MODEL_ROOT,
             "SKILLPIXEL_DEVICE": execution_device,
             "SKILLPIXEL_LOCAL_FILES_ONLY": "true",
+            "SKILLPIXEL_ALLOW_MODEL_DOWNLOAD": "true" if allow_optional_download else "false",
         }
     )
     config = repository / "configs" / "skillpixel_kis.yaml"
@@ -214,6 +254,52 @@ def main() -> int:
         cwd=repository,
         env=env,
     )
+    optional_stage_status: dict[str, bool] = {}
+    if run_ocr:
+        optional_stage_status["ocr"] = _run_optional(
+            [
+                sys.executable,
+                "scripts/skillpixel_kis_build.py",
+                "--config",
+                str(config),
+                "--stage",
+                "ocr",
+                *(["--allow-model-download"] if allow_optional_download else []),
+            ],
+            cwd=repository,
+            env=env,
+            channel="ocr",
+        )
+    if run_object:
+        optional_stage_status["object"] = _run_optional(
+            [
+                sys.executable,
+                "scripts/skillpixel_kis_build.py",
+                "--config",
+                str(config),
+                "--stage",
+                "object",
+                *(["--allow-model-download"] if allow_optional_download else []),
+            ],
+            cwd=repository,
+            env=env,
+            channel="object",
+        )
+    if run_asr:
+        optional_stage_status["asr"] = _run_optional(
+            [
+                sys.executable,
+                "scripts/skillpixel_kis_build.py",
+                "--config",
+                str(config),
+                "--stage",
+                "asr",
+                *(["--allow-model-download"] if allow_optional_download else []),
+            ],
+            cwd=repository,
+            env=env,
+            channel="asr",
+        )
     _run(
         [
             sys.executable,
@@ -254,6 +340,13 @@ def main() -> int:
         "requested_device": REQUESTED_DEVICE,
         "selected_device": execution_device,
         "device_details": device_details,
+        "optional_channels_requested": {
+            "ocr": run_ocr,
+            "object": run_object,
+            "asr": run_asr,
+        },
+        "optional_channel_status": optional_stage_status,
+        "allow_optional_model_download": allow_optional_download,
         "training_status": "not_run",
         "raw_video_source": True,
         "btc_artifacts_used": False,
