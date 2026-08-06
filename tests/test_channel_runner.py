@@ -3,11 +3,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
 from hcmaic.retrieval.channel_runner import (
     build_object_channel,
     build_ocr_channel,
 )
-
 from hcmaic.retrieval.object_retrieval import ObjectRecord
 from hcmaic.retrieval.ocr_bm25 import load_ocr_artifact
 from hcmaic.skillpixel.raw import ingest_raw_videos
