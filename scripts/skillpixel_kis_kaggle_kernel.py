@@ -118,6 +118,40 @@ def _restore_index(run_root: str, index_input: str | None) -> bool:
     return True
 
 
+def _jina_benchmark_command(
+    *,
+    python: str,
+    raw_root: str,
+    index_dir: str,
+    output_dir: str,
+    questions: str,
+    corpus: str,
+    device: str,
+) -> list[str]:
+    """Build the explicit Jina candidate command used by the Kaggle runner."""
+    return [
+        python,
+        "scripts/skillpixel_kis_jina_benchmark.py",
+        "--raw-root",
+        raw_root,
+        "--index-dir",
+        index_dir,
+        "--output-dir",
+        output_dir,
+        "--questions",
+        questions,
+        "--corpus",
+        corpus,
+        "--device",
+        device,
+        "--batch-size",
+        "4",
+        "--top-k",
+        "100",
+        "--allow-model-download",
+    ]
+
+
 def _download_public_model() -> None:
     from huggingface_hub import snapshot_download
 
@@ -191,6 +225,7 @@ def main() -> int:
     run_object = _env_flag("SKILLPIXEL_RUN_OBJECT", default=True)
     run_asr = _env_flag("SKILLPIXEL_RUN_ASR", default=False)
     run_reranker = _env_flag("SKILLPIXEL_RUN_RERANKER", default=False)
+    run_jina = _env_flag("SKILLPIXEL_RUN_JINA", default=False)
     allow_optional_download = _env_flag("SKILLPIXEL_ALLOW_MODEL_DOWNLOAD", default=True)
     if run_ocr:
         _ensure_dependency("paddle", "paddlepaddle>=3.0")
@@ -336,6 +371,21 @@ def main() -> int:
         cwd=repository,
         env=env,
     )
+    if run_jina:
+        optional_stage_status["jina-clip-v2"] = _run_optional(
+            _jina_benchmark_command(
+                python=sys.executable,
+                raw_root=str(Path(RUN_ROOT) / "raw"),
+                index_dir=str(Path(RUN_ROOT) / "visual" / "jina-clip-v2"),
+                output_dir=str(Path(RUN_ROOT) / "jina-clip-v2"),
+                questions=resolved_questions,
+                corpus=resolved_corpus,
+                device=execution_device,
+            ),
+            cwd=repository,
+            env=env,
+            channel="jina-clip-v2",
+        )
     manifest = {
         "format": "hcmaic-skillpixel-kis-kaggle-job-v1",
         "source_dataset": SOURCE_DATASET,
@@ -354,6 +404,7 @@ def main() -> int:
             "ocr": run_ocr,
             "object": run_object,
             "asr": run_asr,
+            "jina-clip-v2": run_jina,
         },
         "real_reranker_requested": run_reranker,
         "optional_channel_status": optional_stage_status,

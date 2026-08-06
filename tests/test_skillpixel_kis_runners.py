@@ -15,6 +15,7 @@ from scripts.skillpixel_kis_build import (
 )
 from scripts.skillpixel_kis_kaggle_kernel import (
     _device_from_probe,
+    _jina_benchmark_command,
     _resolve_input_path,
     _restore_index,
 )
@@ -159,6 +160,22 @@ def test_kaggle_runner_keeps_cuda_for_supported_gpu():
 
     assert device == "cuda"
     assert details["compute_capability"] == "sm_75"
+
+
+def test_kaggle_runner_jina_command_is_explicit_and_no_fallback():
+    command = _jina_benchmark_command(
+        python="python",
+        raw_root="/run/raw",
+        index_dir="/run/visual/jina-clip-v2",
+        output_dir="/run/jina-clip-v2",
+        questions="/query/questions.csv",
+        corpus="/query/corpus.csv",
+        device="cuda",
+    )
+
+    assert command[:2] == ["python", "scripts/skillpixel_kis_jina_benchmark.py"]
+    assert "--allow-model-download" in command
+    assert "--allow-fallback" not in command
 
 
 def test_validator_resolves_default_index_relative_to_run_dir(tmp_path: Path):
