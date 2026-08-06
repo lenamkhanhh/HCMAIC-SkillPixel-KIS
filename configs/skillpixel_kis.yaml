@@ -6,9 +6,9 @@ corpus: ${SKILLPIXEL_CORPUS}
 run_root: ${SKILLPIXEL_RUN_ROOT:-artifacts/skillpixel-kis-sota/runs/local}
 index_dir: ${SKILLPIXEL_INDEX_DIR:-}
 stride_frames: 10
-provider: siglip2
-model_id: V1
-model_path: ${SKILLPIXEL_SIGLIP2_MODEL:-google/siglip2-base-patch16-224}
+provider: ${SKILLPIXEL_PROVIDER:-siglip2}
+model_id: ${SKILLPIXEL_MODEL_ID:-V1}
+model_path: ${SKILLPIXEL_MODEL_PATH:-google/siglip2-base-patch16-224}
 revision: ${SKILLPIXEL_MODEL_REVISION:-}
 device: ${SKILLPIXEL_DEVICE:-cpu}
 batch_size: 32
@@ -24,3 +24,15 @@ object_batch_size: ${SKILLPIXEL_OBJECT_BATCH_SIZE:-8}
 asr_model: ${SKILLPIXEL_ASR_MODEL:-small}
 asr_model_path: ${SKILLPIXEL_ASR_MODEL_PATH:-}
 asr_compute_type: ${SKILLPIXEL_ASR_COMPUTE_TYPE:-int8}
+enable_asr_runtime: ${SKILLPIXEL_ENABLE_ASR_RUNTIME:-false}
+fusion_method: ${SKILLPIXEL_FUSION_METHOD:-rrf}
+fusion_rank_constant: 60
+candidate_multiplier: 5
+max_per_video: 5
+reranker: ${SKILLPIXEL_RERANKER:-bounded-v1}
+rerank_timeout_ms: 50
+fusion_weights:
+  visual: 1.0
+  ocr: 1.0
+  object: 1.0
+  asr: 1.0

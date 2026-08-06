@@ -26,9 +26,74 @@ def _resolve_index(config: dict[str, Any], run_dir: Path) -> Path:
     return run_dir / "visual" / str(config.get("model_id", config.get("provider", "siglip2")))
 
 
+def _channel_artifact_dir(config: dict[str, Any], run_dir: Path, channel: str) -> Path:
+    configured = str(config.get(f"{channel}_artifact", "")).strip()
+    if configured:
+        return Path(configured)
+    version = str(config.get(f"{channel}_version", "V1")).strip() or "V1"
+    return run_dir / "channels" / channel / version
+
+
+def _load_optional_channels(
+    config: dict[str, Any], run_dir: Path, dataset_hash: str
+) -> tuple[dict[str, Any], dict[str, str]]:
+    from hcmaic.retrieval.asr import ASRArtifactError, ASRRetrievalChannel, load_asr_artifact
+    from hcmaic.retrieval.object_retrieval import (
+        ObjectArtifactError,
+        ObjectRetrievalChannel,
+        load_object_artifact,
+    )
+    from hcmaic.retrieval.ocr_bm25 import BM25OCRChannel, OCRArtifactError, load_ocr_artifact
+
+    channels: dict[str, Any] = {}
+    status: dict[str, str] = {
+        "ocr": "not_configured",
+        "object": "not_configured",
+        "asr": "disabled_by_policy",
+    }
+    ocr_dir = _channel_artifact_dir(config, run_dir, "ocr")
+    if (ocr_dir / "ocr_manifest.json").is_file():
+        try:
+            channels["ocr"] = BM25OCRChannel(
+                load_ocr_artifact(ocr_dir, dataset_manifest_hash=dataset_hash)
+            )
+            status["ocr"] = "ready"
+        except OCRArtifactError as exc:
+            status["ocr"] = f"unavailable: {type(exc).__name__}: {exc}"
+    else:
+        status["ocr"] = "not_built"
+    object_dir = _channel_artifact_dir(config, run_dir, "object")
+    if (object_dir / "object_manifest.json").is_file():
+        try:
+            channels["object"] = ObjectRetrievalChannel(
+                load_object_artifact(object_dir, dataset_manifest_hash=dataset_hash)
+            )
+            status["object"] = "ready"
+        except ObjectArtifactError as exc:
+            status["object"] = f"unavailable: {type(exc).__name__}: {exc}"
+    else:
+        status["object"] = "not_built"
+    asr_enabled = _as_bool(config.get("enable_asr_runtime"), default=False)
+    asr_dir = _channel_artifact_dir(config, run_dir, "asr")
+    if asr_enabled:
+        if (asr_dir / "asr_manifest.json").is_file():
+            try:
+                channels["asr"] = ASRRetrievalChannel(
+                    load_asr_artifact(asr_dir, dataset_manifest_hash=dataset_hash)
+                )
+                status["asr"] = "ready"
+            except ASRArtifactError as exc:
+                status["asr"] = f"unavailable: {type(exc).__name__}: {exc}"
+        else:
+            status["asr"] = "not_built"
+    return channels, status
+
+
 def main(argv: list[str] | None = None) -> int:
-    from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig, benchmark_visual_candidate
+    from hcmaic.benchmark.hybrid import benchmark_runtime_candidate
+    from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
     from hcmaic.embedding.factory import get_real_visual_provider
+    from hcmaic.runtime.kis import KISRuntime
     from hcmaic.skillpixel.index import load_skillpixel_index
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -54,6 +119,34 @@ def main(argv: list[str] | None = None) -> int:
             batch_size=int(config.get("batch_size", 32)),
             **kwargs,
         )
+        dataset_hash = str(index.index_manifest.get("dataset_manifest_hash", ""))
+        optional_channels, channel_status = _load_optional_channels(
+            config,
+            run_dir,
+            dataset_hash,
+        )
+        fusion_weights = config.get("fusion_weights", {})
+        if not isinstance(fusion_weights, dict):
+            raise ValueError("config.fusion_weights must be a mapping")
+        runtime = KISRuntime.from_components(
+            index,
+            provider,
+            optional_channels=optional_channels,
+            provider_selection=selection,
+            channel_status=channel_status,
+            asr_enabled=_as_bool(config.get("enable_asr_runtime"), default=False),
+            max_per_video=(
+                int(config["max_per_video"])
+                if config.get("max_per_video") not in {None, ""}
+                else 5
+            ),
+            fusion_method=str(config.get("fusion_method", "rrf")),
+            fusion_weights={str(key): float(value) for key, value in fusion_weights.items()},
+            rank_constant=int(config.get("fusion_rank_constant", 60)),
+            candidate_multiplier=int(config.get("candidate_multiplier", 5)),
+            reranker=str(config.get("reranker", "bounded-v1")),
+            rerank_timeout_ms=int(config.get("rerank_timeout_ms", 50)),
+        )
         benchmark_config = SkillPixelBenchmarkConfig(
             raw_root=run_dir / "raw",
             index_dir=index_dir,
@@ -62,24 +155,29 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=run_dir,
             top_k=max(100, args.top_k),
         )
-        row = benchmark_visual_candidate(
+        row = benchmark_runtime_candidate(
             benchmark_config,
+            runtime,
             provider,
             requested_provider=provider_name,
             selection=selection,
+            channel_status=channel_status,
             variant=str(config.get("model_id", provider_name)),
         )
         variant = str(config.get("model_id", provider_name))
         submission_variant = run_dir / f"submission_{variant}.csv"
         shutil.copyfile(run_dir / "submission.csv", submission_variant)
         manifest = {
-            "format": "hcmaic-skillpixel-kis-inference-v1",
+            "format": "hcmaic-skillpixel-kis-inference-v2",
             "run_dir": str(run_dir),
             "index_dir": str(index_dir),
             "provider": provider.info(),
             "selection": selection,
+            "channel_status": channel_status,
+            "runtime_health": runtime.health(),
             "benchmark_row": row,
             "submission": str(submission_variant),
+            "quality_status": "UNVALIDATED_ON_HCMAIC",
             "training_status": "not_run",
         }
         (run_dir / "inference_manifest.json").write_text(
