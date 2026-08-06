@@ -4,7 +4,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hcmaic.benchmark.hybrid import _write_hybrid_checksums, benchmark_runtime_candidate
+from hcmaic.benchmark.hybrid import (
+    _reranker_manifest,
+    _write_hybrid_checksums,
+    benchmark_runtime_candidate,
+)
 from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.retrieval.ocr_bm25 import BM25OCRChannel, OCRRecord, write_ocr_artifact
@@ -199,3 +203,23 @@ def test_full_skillpixel_artifact_round_trip_preserves_source_mapping(tmp_path: 
     assert all(row["faiss_row"] == row["feature_row"] for row in evidence)
     assert all(row["source_frame_idx"] >= 0 for row in evidence)
     assert all(row["timestamp_ms"] >= 0 for row in evidence)
+
+
+def test_hybrid_registry_exports_real_reranker_metadata() -> None:
+    class FakeReranker:
+        name = "cross-encoder"
+
+        def manifest_metadata(self) -> dict[str, object]:
+            return {"model_id": "test-cross-encoder", "provider_evidence": "REAL_PROVIDER_ARTIFACT"}
+
+    class FakeOrchestrator:
+        _real_reranker = FakeReranker()
+
+    class FakeRuntime:
+        orchestrator = FakeOrchestrator()
+
+    assert _reranker_manifest(FakeRuntime()) == {
+        "status": "ready",
+        "model_id": "test-cross-encoder",
+        "provider_evidence": "REAL_PROVIDER_ARTIFACT",
+    }

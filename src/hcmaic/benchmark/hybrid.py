@@ -187,6 +187,30 @@ def _channel_manifests(runtime: KISRuntime) -> dict[str, Any]:
     return manifests
 
 
+def _reranker_manifest(runtime: KISRuntime) -> dict[str, Any] | None:
+    reranker = getattr(runtime.orchestrator, "_real_reranker", None)
+    if reranker is None:
+        return None
+    metadata_method = getattr(reranker, "manifest_metadata", None)
+    if not callable(metadata_method):
+        return {"status": "metadata_unavailable", "provider": str(getattr(reranker, "name", ""))}
+    try:
+        metadata = metadata_method()
+    except Exception as exc:  # pragma: no cover - provider-specific metadata failure
+        return {
+            "status": "metadata_unavailable",
+            "provider": str(getattr(reranker, "name", "")),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if not isinstance(metadata, dict):
+        return {
+            "status": "metadata_unavailable",
+            "provider": str(getattr(reranker, "name", "")),
+            "error": "manifest_metadata() did not return a mapping",
+        }
+    return {"status": "ready", **metadata}
+
+
 def benchmark_runtime_candidate(
     config: SkillPixelBenchmarkConfig,
     runtime: KISRuntime,
@@ -273,6 +297,7 @@ def benchmark_runtime_candidate(
         selection=selection,
     )
     channel_manifests = _channel_manifests(runtime)
+    reranker_manifest = _reranker_manifest(runtime)
     model_registry = {
         "format": "hcmaic-skillpixel-kis-model-registry-v2",
         "quality_status": QUALITY_STATUS,
@@ -286,6 +311,7 @@ def benchmark_runtime_candidate(
             "weights": dict(runtime.orchestrator.fusion_weights),
             "reranker": runtime.orchestrator.reranker,
             "rerank_timeout_ms": runtime.orchestrator.rerank_timeout_ms,
+            "reranker_metadata": reranker_manifest,
         },
     }
     model_registry_path = candidate_dir / "model_registry.json"
