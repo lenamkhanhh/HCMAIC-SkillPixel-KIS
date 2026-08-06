@@ -100,6 +100,7 @@ class CrossEncoderReranker:
         return {
             "model_source_url": self.SOURCE_URL,
             "model_id": self.model_id,
+            "revision": self.revision,
             "weights_path": str(self.model_path) if self.model_path is not None else None,
             "weights_sha256": (
                 sha256_path(self.model_path) if self.model_path is not None else None
