@@ -8,7 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.skillpixel_kis_build import load_skillpixel_config, provider_model_kwargs
-from scripts.skillpixel_kis_kaggle_kernel import _device_from_probe, _resolve_input_path
+from scripts.skillpixel_kis_kaggle_kernel import (
+    _device_from_probe,
+    _resolve_input_path,
+    _restore_index,
+)
 from scripts.skillpixel_kis_validate import _resolve_index_dir
 
 
@@ -96,3 +100,13 @@ def test_validator_resolves_default_index_relative_to_run_dir(tmp_path: Path):
     assert _resolve_index_dir({"model_id": "V1", "index_dir": ""}, tmp_path) == (
         tmp_path / "visual" / "V1"
     )
+
+
+def test_kaggle_runner_restores_self_generated_index(tmp_path: Path):
+    source = tmp_path / "index-source"
+    source.mkdir()
+    (source / "index.faiss").write_bytes(b"index")
+    run_root = tmp_path / "run"
+
+    assert _restore_index(str(run_root), str(source)) is True
+    assert (run_root / "visual" / "V1" / "index.faiss").read_bytes() == b"index"

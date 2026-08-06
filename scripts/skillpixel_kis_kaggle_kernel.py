@@ -18,6 +18,7 @@ QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
 CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
 RUN_ROOT = "/kaggle/working/skillpixel-kis-run-v1"
 MODEL_ROOT = "/kaggle/working/models/siglip2-base-patch16-224"
+INDEX_INPUT = "/kaggle/input/skillpixel-kis-siglip2-index-v8-20260806/visual/V1"
 KAGGLE_INPUT_ROOT = Path("/kaggle/input")
 REQUESTED_DEVICE = "cuda"
 
@@ -62,6 +63,26 @@ def _resolve_input_path(
     for match in matches:
         parents[match.parent] = parents.get(match.parent, 0) + 1
     return str(max(parents, key=lambda path: (parents[path], str(path))))
+
+
+def _resolve_optional_index_input() -> str | None:
+    try:
+        return _resolve_input_path(INDEX_INPUT, suffix="index.faiss", return_parent=True)
+    except FileNotFoundError:
+        return None
+
+
+def _restore_index(run_root: str, index_input: str | None) -> bool:
+    if not index_input:
+        return False
+    source = Path(index_input)
+    target = Path(run_root) / "visual" / "V1"
+    if target.exists() and any(target.iterdir()):
+        return True
+    if not source.is_dir():
+        raise FileNotFoundError(f"Self-generated index input is not a directory: {source}")
+    shutil.copytree(source, target)
+    return True
 
 
 def _download_public_model() -> None:
@@ -153,6 +174,7 @@ def main() -> int:
     resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4", return_parent=True)
     resolved_questions = _resolve_input_path(QUESTIONS, suffix="questions.csv")
     resolved_corpus = _resolve_input_path(CORPUS, suffix="corpus.csv")
+    resolved_index_input = _resolve_optional_index_input()
     env.update(
         {
             "SKILLPIXEL_RAW_INPUT": resolved_raw_input,
@@ -177,6 +199,7 @@ def main() -> int:
         cwd=repository,
         env=env,
     )
+    index_reused = _restore_index(RUN_ROOT, resolved_index_input)
     _run(
         [
             sys.executable,
@@ -224,6 +247,8 @@ def main() -> int:
         "raw_input": resolved_raw_input,
         "questions": resolved_questions,
         "corpus": resolved_corpus,
+        "index_input": resolved_index_input,
+        "index_reused": index_reused,
         "run_root": RUN_ROOT,
         "model_id": "google/siglip2-base-patch16-224",
         "requested_device": REQUESTED_DEVICE,
