@@ -180,12 +180,22 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _merge_manifest_extra(manifest: dict[str, Any], extra: dict[str, Any] | None) -> None:
+    if not extra:
+        return
+    overlap = sorted(set(extra).intersection(manifest))
+    if overlap:
+        raise ASRArtifactError(f"manifest_extra cannot override reserved fields: {overlap}")
+    manifest.update(extra)
+
+
 def write_asr_artifact(
     records: list[ASRRecord],
     artifact_dir: Path,
     *,
     dataset_manifest_hash: str,
     provider_execution: str = "validated-local",
+    manifest_extra: dict[str, Any] | None = None,
 ) -> ASRArtifact:
     """Persist timestamped ASR output; runtime enablement remains policy-gated."""
     if not dataset_manifest_hash.strip():
@@ -233,6 +243,7 @@ def write_asr_artifact(
         "evidence_level": "REAL_PROVIDER_ARTIFACT",
         "quality_status": "UNVALIDATED_ON_HCMAIC",
     }
+    _merge_manifest_extra(manifest, manifest_extra)
     _write_json(artifact_dir / ASR_MANIFEST_NAME, manifest)
     return load_asr_artifact(artifact_dir, dataset_manifest_hash=dataset_manifest_hash)
 

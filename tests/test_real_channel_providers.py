@@ -8,11 +8,11 @@ from hcmaic.retrieval.object_retrieval import ObjectRecord, write_object_artifac
 from hcmaic.retrieval.ocr_bm25 import OCRRecord, write_ocr_artifact
 from hcmaic.retrieval.real_channels import (
     ASRObservation,
-    OCRObservation,
     ObjectObservation,
+    OCRObservation,
     asr_records_for_video,
-    ocr_record_for_frame,
     object_records_for_frame,
+    ocr_record_for_frame,
 )
 
 

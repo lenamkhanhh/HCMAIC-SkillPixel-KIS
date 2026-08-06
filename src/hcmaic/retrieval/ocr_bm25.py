@@ -112,12 +112,22 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _merge_manifest_extra(manifest: dict[str, Any], extra: dict[str, Any] | None) -> None:
+    if not extra:
+        return
+    overlap = sorted(set(extra).intersection(manifest))
+    if overlap:
+        raise OCRArtifactError(f"manifest_extra cannot override reserved fields: {overlap}")
+    manifest.update(extra)
+
+
 def write_ocr_artifact(
     records: list[OCRRecord],
     artifact_dir: Path,
     *,
     dataset_manifest_hash: str,
     provider_execution: str = "validated-local",
+    manifest_extra: dict[str, Any] | None = None,
 ) -> OCRArtifact:
     """Persist a canonical raw-derived OCR artifact and its provenance manifest."""
     if not dataset_manifest_hash.strip():
@@ -165,6 +175,7 @@ def write_ocr_artifact(
         "evidence_level": "REAL_PROVIDER_ARTIFACT",
         "quality_status": "UNVALIDATED_ON_HCMAIC",
     }
+    _merge_manifest_extra(manifest, manifest_extra)
     _write_json(artifact_dir / OCR_MANIFEST_NAME, manifest)
     return load_ocr_artifact(artifact_dir, dataset_manifest_hash=dataset_manifest_hash)
 
