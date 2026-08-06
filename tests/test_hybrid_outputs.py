@@ -9,8 +9,9 @@ from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.retrieval.ocr_bm25 import BM25OCRChannel, OCRRecord, write_ocr_artifact
 from hcmaic.runtime.kis import KISRuntime
-from hcmaic.skillpixel.index import build_skillpixel_index
-from hcmaic.skillpixel.raw import ingest_raw_videos
+from hcmaic.skillpixel.index import build_skillpixel_index, load_skillpixel_index
+from hcmaic.skillpixel.raw import ingest_raw_videos, validate_raw_dataset
+from hcmaic.skillpixel.submission import validate_submission_csv
 
 
 class _Provider(EmbeddingProvider):
@@ -132,3 +133,69 @@ def test_hybrid_checksums_exclude_manifests_written_after_benchmark(tmp_path: Pa
     assert "stable.json" in first
     assert "inference_manifest.json" not in first
     assert "validation_final.json" not in first
+
+
+def test_full_skillpixel_artifact_round_trip_preserves_source_mapping(tmp_path: Path) -> None:
+    _write_video(tmp_path / "videos" / "roundtrip.avi", frame_count=201)
+    raw_root = tmp_path / "raw"
+    ingest_raw_videos(tmp_path / "videos", raw_root, stride_frames=2)
+    assert validate_raw_dataset(raw_root).n_frames == 101
+
+    provider = _Provider()
+    index_dir = tmp_path / "index"
+    build_skillpixel_index(raw_root, index_dir, provider)
+    reloaded = load_skillpixel_index(index_dir)
+
+    assert reloaded.faiss_index.ntotal == 101
+    first_id = reloaded.id_map[0]
+    first_catalog = reloaded.catalog[0]
+    assert first_id["faiss_row"] == 0
+    assert first_id["feature_row"] == 0
+    assert first_id["frame_uid"] == first_catalog.frame_id
+    assert first_id["video_id"] == "roundtrip"
+    assert first_id["source_frame_idx"] == 0
+    assert first_id["timestamp_ms"] == first_catalog.timestamp_ms
+
+    query_image = tmp_path / "query.jpg"
+    cv2.imwrite(str(query_image), np.zeros((24, 32, 3), dtype=np.uint8))
+    questions_path = tmp_path / "questions.csv"
+    questions_path.write_text(
+        "query_id,task,text,query_image\n"
+        "T1,TKIS,roundtrip,\n"
+        "V1,VKIS,,query.jpg\n",
+        encoding="utf-8",
+    )
+    corpus_path = tmp_path / "corpus.csv"
+    corpus_path.write_text("video,frame_count\nroundtrip.avi,201\n", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    config = SkillPixelBenchmarkConfig(
+        raw_root=raw_root,
+        index_dir=index_dir,
+        questions_path=questions_path,
+        corpus_path=corpus_path,
+        output_dir=output_dir,
+        top_k=100,
+    )
+    runtime = KISRuntime.from_components(reloaded, provider, max_per_video=None)
+    benchmark_runtime_candidate(
+        config,
+        runtime,
+        provider,
+        requested_provider=provider.name,
+        selection={"provider": provider.name, "fallback": None},
+    )
+
+    submission_report = validate_submission_csv(
+        output_dir / "submission.csv", questions_path, corpus_path
+    )
+    evidence = [
+        json.loads(line)
+        for line in (output_dir / "retrieval_evidence_top20.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert submission_report.ok
+    assert len(evidence) == 40
+    assert all(row["faiss_row"] == row["feature_row"] for row in evidence)
+    assert all(row["source_frame_idx"] >= 0 for row in evidence)
+    assert all(row["timestamp_ms"] >= 0 for row in evidence)
