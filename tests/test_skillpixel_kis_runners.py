@@ -49,6 +49,21 @@ def test_kaggle_runner_resolves_mounted_video_parent(tmp_path: Path, monkeypatch
         tmp_path / "input",
     )
 
-    assert _resolve_input_path("/kaggle/input/kis-skillpixel/videos", suffix="*.mp4") == str(
-        mounted
+    assert _resolve_input_path(
+        "/kaggle/input/kis-skillpixel/videos", suffix="*.mp4", return_parent=True
+    ) == str(mounted)
+
+
+def test_kaggle_runner_resolves_query_file_not_parent(tmp_path: Path, monkeypatch):
+    query_dir = tmp_path / "input" / "datasets" / "khanhss" / "skillpixel-query"
+    query_dir.mkdir(parents=True)
+    questions = query_dir / "questions.csv"
+    questions.write_text("query_id,task\nq1,TKIS\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.skillpixel_kis_kaggle_kernel.KAGGLE_INPUT_ROOT",
+        tmp_path / "input",
     )
+
+    assert _resolve_input_path(
+        "/kaggle/input/skillpixel-query/questions.csv", suffix="questions.csv"
+    ) == str(questions)

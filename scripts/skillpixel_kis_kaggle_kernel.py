@@ -40,7 +40,9 @@ def _ensure_repository() -> Path:
     return repository
 
 
-def _resolve_input_path(configured: str, *, suffix: str | None = None) -> str:
+def _resolve_input_path(
+    configured: str, *, suffix: str | None = None, return_parent: bool = False
+) -> str:
     """Resolve Kaggle's mounted slug without changing the SkillPixel source contract."""
     candidate = Path(configured)
     if candidate.exists():
@@ -52,7 +54,7 @@ def _resolve_input_path(configured: str, *, suffix: str | None = None) -> str:
         raise FileNotFoundError(
             f"Kaggle input path is missing and no fallback was found: {configured}"
         )
-    if suffix is None:
+    if suffix is None or not return_parent:
         return str(sorted(matches)[0])
     parents: dict[Path, int] = {}
     for match in matches:
@@ -85,7 +87,7 @@ def main() -> int:
         item for item in (source_path, env.get("PYTHONPATH", "")) if item
     )
     _download_public_model()
-    resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4")
+    resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4", return_parent=True)
     resolved_questions = _resolve_input_path(QUESTIONS, suffix="questions.csv")
     resolved_corpus = _resolve_input_path(CORPUS, suffix="corpus.csv")
     env.update(
