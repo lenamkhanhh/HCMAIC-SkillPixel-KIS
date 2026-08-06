@@ -46,6 +46,12 @@ class KISRuntime:
         channel_status: dict[str, str] | None = None,
         asr_enabled: bool = False,
         max_per_video: int | None = 5,
+        fusion_method: str = "rrf",
+        fusion_weights: dict[str, float] | None = None,
+        rank_constant: int = 60,
+        candidate_multiplier: int = 5,
+        reranker: str = "bounded-v1",
+        rerank_timeout_ms: int = 50,
     ) -> KISRuntime:
         retriever = SkillPixelRetriever(index, provider)
         orchestrator = KISHybridOrchestrator(
@@ -53,6 +59,12 @@ class KISRuntime:
             optional_channels=optional_channels,
             asr_enabled=asr_enabled,
             max_per_video=max_per_video,
+            fusion_method=fusion_method,
+            fusion_weights=fusion_weights,
+            rank_constant=rank_constant,
+            candidate_multiplier=candidate_multiplier,
+            reranker=reranker,
+            rerank_timeout_ms=rerank_timeout_ms,
         )
         return cls(
             index=index,

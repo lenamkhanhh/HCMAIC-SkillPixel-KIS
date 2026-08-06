@@ -3,8 +3,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from hcmaic.benchmark.hybrid import benchmark_runtime_candidate
 
+from hcmaic.benchmark.hybrid import benchmark_runtime_candidate
 from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.retrieval.ocr_bm25 import BM25OCRChannel, OCRRecord, write_ocr_artifact
