@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SOURCE_DATASET = "khanhss/hcmaic-skillpixel-kis-source-20260806"
@@ -67,12 +68,27 @@ def _download_public_model() -> None:
     from huggingface_hub import snapshot_download
 
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-    snapshot_download(
-        repo_id="google/siglip2-base-patch16-224",
-        local_dir=MODEL_ROOT,
-        token=token or None,
-        local_dir_use_symlinks=False,
-    )
+    for attempt in range(1, 4):
+        try:
+            snapshot_download(
+                repo_id="google/siglip2-base-patch16-224",
+                local_dir=MODEL_ROOT,
+                token=token or None,
+                max_workers=1,
+            )
+            return
+        except Exception as exc:  # pragma: no cover - depends on Kaggle network
+            print(
+                json.dumps(
+                    {
+                        "model_download_attempt": attempt,
+                        "model_download_error": type(exc).__name__,
+                    }
+                )
+            )
+            if attempt == 3:
+                raise
+            time.sleep(5 * attempt)
 
 
 def _device_from_probe(
