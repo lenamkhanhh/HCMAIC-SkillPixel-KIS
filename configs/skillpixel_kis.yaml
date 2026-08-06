@@ -34,7 +34,7 @@ reranker_model: ${SKILLPIXEL_RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v
 reranker_model_path: ${SKILLPIXEL_RERANKER_MODEL_PATH:-}
 reranker_batch_size: ${SKILLPIXEL_RERANKER_BATCH_SIZE:-16}
 reranker_max_length: 256
-rerank_timeout_ms: 50
+rerank_timeout_ms: ${SKILLPIXEL_RERANK_TIMEOUT_MS:-50}
 fusion_weights:
   visual: 1.0
   ocr: 1.0

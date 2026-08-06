@@ -40,6 +40,15 @@ def test_runner_config_expands_environment_variables(tmp_path: Path, monkeypatch
     assert config["run_root"] == "runs/default"
 
 
+def test_runner_expands_explicit_rerank_timeout(monkeypatch):
+    config_path = Path(__file__).resolve().parents[1] / "configs" / "skillpixel_kis.yaml"
+    monkeypatch.setenv("SKILLPIXEL_RERANK_TIMEOUT_MS", "5000")
+
+    config = load_skillpixel_config(config_path)
+
+    assert config["rerank_timeout_ms"] == "5000"
+
+
 def test_runner_model_mapping_is_explicit_and_no_fallback():
     assert provider_model_kwargs("siglip2", "/models/siglip2") == {
         "siglip2_model": "/models/siglip2",
