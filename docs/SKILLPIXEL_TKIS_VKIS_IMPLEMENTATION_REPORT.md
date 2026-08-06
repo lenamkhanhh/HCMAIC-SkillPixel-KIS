@@ -990,11 +990,153 @@ Push/PR status:
   `https://github.com/lenamkhanhh/HCMAIC-2026-system/pull/1`
 - PR base is `hcmaic-2026-foundation`; PR head is
   `feat/skillpixel-tkis-vkis`.
-```
-```
-```
-```
-```
-```
-```
-```
+## 2026-08-06 continuation - Kaggle V9 raw-video-first result
+
+This section records the authenticated Kaggle retry and the real end-to-end
+SkillPixel run completed after the earlier local-only benchmark. The run used
+only SkillPixel inputs:
+
+- Raw video dataset: trieu241007/kis-skillpixel.
+- Query dataset: khanhss/skillpixel-kis-query-input-20260806, containing
+  questions.csv, corpus.csv, sample_submission.csv, and the VKIS query images
+  under vkis/frames/.
+- Source-only runner dataset: khanhss/hcmaic-skillpixel-kis-source-20260806.
+- Self-generated visual index dataset: khanhss/skillpixel-kis-siglip2-index-v8-20260806.
+
+No teammate/BTC keyframe, mapping, feature, object, raw-video or model-weight
+artifact is used as a production source. The source-only package has no private
+repository clone and no secret. The source and configuration packages contain
+no unrelated private dataset or repository reference.
+
+### Kaggle execution and provider
+
+API smoke test: kaggle kernels list -p 1 passed. The CLI emitted only the
+known outdated-client warning (2.0.1 versus 2.2.2); it did not block the job.
+No kaggle whoami or kaggle auth status command was used.
+
+Kernel:
+https://www.kaggle.com/code/khanhss/skillpixel-kis-gpu-end-to-end-v1,
+version 9, status COMPLETE.
+
+The job requested CUDA and was allocated a Tesla P100 (sm_60). The installed
+Torch CUDA build requires sm_70+, so the runner explicitly selected CPU with
+reason torch_cuda_build_requires_sm70_or_newer. This is a recorded device
+compatibility decision, not a silent provider fallback. The selected provider
+remained real SigLIP2:
+
+- model family: google/siglip2-base-patch16-224;
+- revision: main;
+- dimension: 768;
+- normalization: L2, float32;
+- provider evidence: REAL_PROVIDER;
+- fallback: None;
+- training: not_run.
+
+The index was restored from the self-generated SkillPixel index dataset, then
+loaded as exact FAISS IndexFlatIP. Its manifest reports 9,835 vectors,
+dimension 768, normalized embeddings, and faiss_ntotal=9,835.
+
+### Full query and submission result
+
+The run processed 250 raw videos and 9,835 dense sampled frames using
+uniform_stride_10_v1. It processed 100 queries in original order: 50 TKIS and
+50 VKIS. All 100 query statuses are ok, with 50 text-encoder and 50
+image-encoder requests using the same visual index/provider family.
+
+validation_final.json reports:
+
+- valid=true;
+- raw source: 250 videos, 9,835 frames;
+- index: 9,835 vectors, 768 dimensions, exact IndexFlatIP;
+- mapping: 9,835 checked, 0 errors;
+- submission: 100 queries, valid;
+- quality_status=UNVALIDATED_ON_HCMAIC;
+- btc_artifacts_used=false.
+
+The exported submission.csv has 100 rows, preserves the question ID order, has
+exactly 100 answer columns per query, and uses
+video_filename.mp4,source_frame_idx. An independent local check found zero
+answers outside the raw catalog's (video_filename, source_frame_idx) set.
+
+Evidence was exported for both top-20 and top-100. Each evidence row contains
+query_id, query_order, query_type, rank, faiss_row, feature_row, frame_uid,
+video_id, video_filename, source_frame_idx, timestamp_ms, preview_path,
+visual_score, and nullable OCR/object/ASR/RRF/rerank scores. The run contains
+2,000 top-20 rows and 10,000 top-100 rows.
+
+Selected output review bundle:
+
+    D:\Kaggle\skillpixel-kis-gpu-output-20260806-v9-selected\
+      submission.csv
+      validation_final.json
+      query_status.jsonl
+      retrieval_evidence_top20.jsonl
+      retrieval_evidence_top100.jsonl
+      inference_manifest.json
+      model_registry.json
+      preflight_report.json
+      kaggle_job_manifest.json
+      checksums.sha256
+      raw\catalog.jsonl
+      visual\V1\index_manifest.json
+      visual\V1\provider_report.json
+
+The local real-provider rehearsal is also available at
+D:\Kaggle\skillpixel-kis-local-infer-v8b\, including submission_V1.csv and its
+validated run artifacts.
+
+### Resource evidence
+
+The Kaggle manifest recorded approximately 1,153.46 MB artifact disk usage,
+2,257.82 MB RAM, 17,816.91 ms total batched query time, 287.768 ms query
+latency p50, and 343.012 ms p95. VRAM was not used because the P100 capability
+gate selected CPU.
+
+### Channel and quality status
+
+The operationally promoted visual configuration is real SigLIP2 V1. The
+previous real CLIP 512D baseline remains available for rollback and comparison.
+Strict local Jina CLIP v2 was unavailable because its weights were not cached.
+OCR/BM25, object detection and ASR remain explicit unavailable channels in this
+run because no validated raw-derived production artifacts/provider cache were
+available. The runner does not create mock scores; reranking/fusion fields are
+therefore null for the visual-only submission. TRAKE and Q&A remain out of
+scope.
+
+No HCMAIC qrels were available. Recall, MRR, official QueryScore, top-1 or SOTA
+claims are intentionally not reported. The correct quality label remains
+UNVALIDATED_ON_HCMAIC.
+
+### Verification and Git handoff
+
+Commands run in system:
+
+    kaggle kernels list -p 1
+    uv run pytest
+    uv run ruff check src tests scripts
+    uv run mypy src
+    git diff --check -- .
+
+Results: Kaggle API smoke passed; 257 passed with one pre-existing FastAPI/httpx
+deprecation warning; Ruff passed; Mypy passed for 65 source files; diff check
+passed. Unrelated pre-existing untracked documentation directories were left
+untouched and unstaged.
+
+The current implementation commits are on
+codex/feat/skillpixel-kis-sota-benchmark and are pushed to the writable staging
+remote. The existing draft PR is
+https://github.com/lenamkhanhh/HCMAIC-2026-system/pull/2.
+The origin remote remains non-writable for the current GitHub account (HTTP
+403); no force-push or direct main push was attempted.
+
+Reproducible local flow:
+
+    uv run python scripts\skillpixel_kis_build.py --config configs\skillpixel_kis.yaml --run-dir <run-dir>
+    uv run python scripts\skillpixel_kis_infer.py --config configs\skillpixel_kis.yaml --run-dir <run-dir> --top-k 100
+    uv run python scripts\skillpixel_kis_validate.py --config configs\skillpixel_kis.yaml --run-dir <run-dir>
+
+The Kaggle flow is packaged by
+scripts\skillpixel_kis_kaggle_kernel.py; it resolves only the declared
+SkillPixel dataset mounts and can resume the self-generated index. Rollback is
+recoverable with explicit git revert of the latest SkillPixel Kaggle/provider
+commits in reverse order; no reset, checkout or destructive cleanup was used.
