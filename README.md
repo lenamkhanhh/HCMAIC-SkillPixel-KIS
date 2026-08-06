@@ -6,6 +6,59 @@ Project được phát triển từ
 theo giấy phép MIT; commit gốc và phần thay đổi được ghi tại
 [UPSTREAM.md](UPSTREAM.md).
 
+## SkillPixel KIS repository
+
+This public repository is the preserved-history SkillPixel KIS checkout:
+[HCMAIC-SkillPixel-KIS](https://github.com/lenamkhanhh/HCMAIC-SkillPixel-KIS).
+Its main branch is copied from the raw-video-first implementation branch at
+commit 7dbc1aa; no previous milestone commits were squashed or removed.
+
+The production contract is:
+
+    raw SkillPixel videos
+      -> dense frames + source_frame_idx mapping
+      -> real provider embeddings + normalized exact IndexFlatIP
+      -> TKIS text / VKIS image retrieval
+      -> optional validated OCR, object and ASR channels
+      -> RRF/dedup/bounded rerank
+      -> video_filename.mp4,source_frame_idx
+      -> validated submission.csv and top-k evidence
+
+Raw videos, query data, model weights, embedding matrices, FAISS indexes and
+secrets are external inputs/artifacts and are never committed. Tests are
+offline and local-files-only by default.
+
+### Reproduce the verified visual baseline
+
+From PowerShell, set the four SkillPixel paths explicitly and run:
+
+    cd D:\Code\Code\AIO\Code\HCMAIC-SkillPixel-KIS
+    $env:SKILLPIXEL_RAW_INPUT = "D:\path\to\SkillPixel\videos"
+    $env:SKILLPIXEL_QUESTIONS = "D:\path\to\SkillPixel\questions.csv"
+    $env:SKILLPIXEL_CORPUS = "D:\path\to\SkillPixel\corpus.csv"
+    $env:SKILLPIXEL_SIGLIP2_MODEL = "D:\path\to\siglip2-base-patch16-224"
+    $env:SKILLPIXEL_RUN_ROOT = "D:\path\to\run"
+    $env:SKILLPIXEL_DEVICE = "cpu"
+    $env:SKILLPIXEL_LOCAL_FILES_ONLY = "true"
+    uv run python scripts\skillpixel_kis_build.py --config configs\skillpixel_kis.yaml --stage catalog
+    uv run python scripts\skillpixel_kis_build.py --config configs\skillpixel_kis.yaml --stage visual
+    uv run python scripts\skillpixel_kis_infer.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT --top-k 100
+    uv run python scripts\skillpixel_kis_validate.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT
+
+The verified SkillPixel rehearsal processed 250 raw videos, 9,835 sampled
+frames and 100 queries (50 TKIS, 50 VKIS) with real SigLIP2 768D and exact
+FAISS. Without official qrels, reports retain UNVALIDATED_ON_HCMAIC.
+
+### Verification
+
+    uv run pytest
+    uv run ruff check src tests scripts
+    uv run mypy src
+
+Do not enable network/model downloads implicitly. A GPU/Kaggle run must record
+the requested and selected device, model revision, artifact hashes and
+fallback reason in its manifest.
+
 ```text
 keyframe + mapping CSV + metadata
   -> validate -> catalog -> embedding -> vector index
