@@ -10,10 +10,26 @@ from hcmaic.retrieval.real_channels import (
     ASRObservation,
     ObjectObservation,
     OCRObservation,
+    PaddleOCRFrameProvider,
     asr_records_for_video,
     object_records_for_frame,
     ocr_record_for_frame,
 )
+
+
+def test_paddleocr_constructor_disables_windows_mkldnn_runtime_path() -> None:
+    provider = PaddleOCRFrameProvider.__new__(PaddleOCRFrameProvider)
+    provider.device = "cpu"
+    provider.model_path = None
+    captured: dict[str, object] = {}
+
+    def fake_constructor(ocr_version: str, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    provider._construct(fake_constructor, "PP-OCRv6")
+
+    assert captured["enable_mkldnn"] is False
 
 
 def _frame(

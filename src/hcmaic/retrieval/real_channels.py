@@ -342,7 +342,7 @@ class PaddleOCRFrameProvider:
                 "--allow-model-download"
             )
         try:
-            from paddleocr import PaddleOCR  # type: ignore[import-not-found]
+            from paddleocr import PaddleOCR  # type: ignore[import-not-found,import-untyped]
         except ImportError as exc:
             raise RealChannelUnavailable(
                 "paddleocr is not installed; install the OCR extra in the execution environment"
@@ -386,7 +386,18 @@ class PaddleOCRFrameProvider:
                     kwargs[key] = str(self.model_path)
                     if key != "model_dir":
                         break
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if "enable_mkldnn" in parameters or accepts_kwargs:
+            # PaddleOCR 3.x routes this flag through **kwargs.  Disabling
+            # oneDNN avoids a known Windows CPU PIR runtime failure while
+            # keeping the provider explicit and real.
+            kwargs["enable_mkldnn"] = False
         supported = {key: value for key, value in kwargs.items() if key in parameters}
+        if accepts_kwargs:
+            supported["enable_mkldnn"] = False
         return constructor(**supported)
 
     def infer_image(self, image_path: Path) -> list[OCRObservation]:
@@ -413,7 +424,11 @@ class PaddleOCRFrameProvider:
             "weights_sha256": _model_checksum(self.model_path),
             "provider_package": "paddleocr",
             "provider_package_version": package_version("paddleocr"),
-            "runtime": {"device": self.device, "batch_size": batch_size},
+            "runtime": {
+                "device": self.device,
+                "batch_size": batch_size,
+                "enable_mkldnn": False,
+            },
             "fallback_from": self.fallback_from,
             "provider_evidence": "REAL_PROVIDER_ARTIFACT",
         }
