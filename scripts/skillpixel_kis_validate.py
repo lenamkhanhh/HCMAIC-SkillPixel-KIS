@@ -41,6 +41,13 @@ def _verify_checksums(run_dir: Path) -> list[str]:
     return errors
 
 
+def _resolve_index_dir(config: dict[str, Any], run_dir: Path) -> Path:
+    configured_index = str(config.get("index_dir", "")).strip()
+    if configured_index:
+        return Path(configured_index)
+    return run_dir / "visual" / str(config.get("model_id", config.get("provider", "siglip2")))
+
+
 def main(argv: list[str] | None = None) -> int:
     from hcmaic.skillpixel.index import load_skillpixel_index
     from hcmaic.skillpixel.raw import validate_raw_dataset
@@ -55,11 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_skillpixel_config(args.config)
         raw_root = run_dir / "raw"
-        index_dir = Path(str(config.get("index_dir", "")).strip())
-        if not str(index_dir):
-            index_dir = run_dir / "visual" / str(
-                config.get("model_id", config.get("provider", "siglip2"))
-            )
+        index_dir = _resolve_index_dir(config, run_dir)
         raw_stats = validate_raw_dataset(raw_root)
         index = load_skillpixel_index(index_dir)
         mapping = _mapping_validation(index)

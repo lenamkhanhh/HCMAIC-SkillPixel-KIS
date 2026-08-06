@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.skillpixel_kis_build import load_skillpixel_config, provider_model_kwargs
 from scripts.skillpixel_kis_kaggle_kernel import _device_from_probe, _resolve_input_path
+from scripts.skillpixel_kis_validate import _resolve_index_dir
 
 
 def test_runner_config_expands_environment_variables(tmp_path: Path, monkeypatch):
@@ -89,3 +90,9 @@ def test_kaggle_runner_keeps_cuda_for_supported_gpu():
 
     assert device == "cuda"
     assert details["compute_capability"] == "sm_75"
+
+
+def test_validator_resolves_default_index_relative_to_run_dir(tmp_path: Path):
+    assert _resolve_index_dir({"model_id": "V1", "index_dir": ""}, tmp_path) == (
+        tmp_path / "visual" / "V1"
+    )
