@@ -85,6 +85,21 @@ def test_skillpixel_cli_commands_are_available():
             "questions.csv",
         ]
     )
+    sota_benchmark = parser.parse_args(
+        [
+            "benchmark-skillpixel",
+            "--raw",
+            "raw",
+            "--index",
+            "index",
+            "--questions",
+            "questions.csv",
+            "--corpus",
+            "corpus.csv",
+            "--out",
+            "benchmark",
+        ]
+    )
 
     assert ingest.command == "ingest-raw"
     assert ingest.stride_frames == 10
@@ -96,3 +111,4 @@ def test_skillpixel_cli_commands_are_available():
     assert kis_export.command == "export-kis"
     assert kis_serve.command == "serve-kis"
     assert kis_benchmark.command == "benchmark-kis"
+    assert sota_benchmark.command == "benchmark-skillpixel"

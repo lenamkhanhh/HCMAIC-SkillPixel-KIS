@@ -134,7 +134,7 @@ def load_kis_runtime(
     index = load_skillpixel_index(index_dir)
     expected_provider = str(index.provider_info.get("provider", ""))
     prefer = expected_provider if provider == "auto" else provider
-    if prefer not in {"siglip2", "clip"}:
+    if prefer not in {"siglip2", "clip", "jina-clip-v2"}:
         raise ValueError(f"unsupported KIS visual provider {prefer!r}")
     visual_provider, selection = get_real_visual_provider(
         prefer=prefer,

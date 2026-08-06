@@ -503,6 +503,68 @@ def _cmd_serve_kis(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_benchmark_skillpixel(args: argparse.Namespace) -> int:
+    from hcmaic.benchmark.skillpixel import (
+        SkillPixelBenchmarkConfig,
+        run_skillpixel_benchmark,
+    )
+
+    qrels: dict[str, object] | None = None
+    if args.qrels:
+        from hcmaic.evaluation.kis import load_kis_qrels
+
+        qrel_set = load_kis_qrels(Path(args.qrels), source=args.qrels_source)
+        qrels = {
+            query_id: sorted(qrel.relevant_answer_cells)
+            for query_id, qrel in qrel_set.qrels.items()
+        }
+    config = SkillPixelBenchmarkConfig(
+        raw_root=Path(args.raw),
+        index_dir=Path(args.index),
+        questions_path=Path(args.questions),
+        corpus_path=Path(args.corpus),
+        output_dir=Path(args.out),
+        top_k=args.top_k,
+        qrels=qrels,
+        qrels_source=args.qrels_source if args.qrels else None,
+        ocr_artifact=Path(args.ocr_artifact) if args.ocr_artifact else None,
+        object_artifact=Path(args.object_artifact) if args.object_artifact else None,
+    )
+    try:
+        rows, paths = run_skillpixel_benchmark(
+            config,
+            provider_ids=tuple(item.strip() for item in args.providers.split(",") if item.strip()),
+            device=args.device,
+            batch_size=args.batch_size,
+            allow_network=args.allow_network,
+            build_missing=not args.no_build_missing,
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    validated = [row for row in rows if row.get("status") == "validated-local"]
+    print(
+        json.dumps(
+            {
+                "benchmark_results": str(paths["csv"]),
+                "benchmark_report": str(paths["report"]),
+                "run_manifest": str(paths["manifest"]),
+                "n_rows": len(rows),
+                "n_validated": len(validated),
+                "quality_status": (
+                    "VALIDATED_ON_SKILLPIXEL_QRELS" if qrels else "UNVALIDATED_ON_SKILLPIXEL_QRELS"
+                ),
+            },
+            ensure_ascii=False,
+        )
+    )
+    has_visual = any(
+        row.get("kind") == "visual" and row.get("status") == "validated-local"
+        for row in rows
+    )
+    return 0 if has_visual else 2
+
+
 def _cmd_benchmark_kis(args: argparse.Namespace) -> int:
     from hcmaic.evaluation.kis import (
         evaluate_kis_runtime,
@@ -844,6 +906,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame-tolerance", type=int, default=12)
     p.add_argument("--out")
     p.set_defaults(func=_cmd_benchmark_kis)
+
+    p = sub.add_parser(
+        "benchmark-skillpixel",
+        help="Run the SkillPixel V0/V1/V2 provider and channel benchmark matrix",
+    )
+    p.add_argument("--raw", required=True, help="Generated raw-video dataset root")
+    p.add_argument("--index", required=True, help="Existing V0 visual index")
+    p.add_argument("--questions", required=True)
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--providers", default="clip,siglip2,jina-clip-v2")
+    p.add_argument("--top-k", type=int, default=100)
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--allow-network", action="store_true")
+    p.add_argument("--no-build-missing", action="store_true")
+    p.add_argument("--qrels")
+    p.add_argument("--qrels-source", default="unknown")
+    p.add_argument("--ocr-artifact")
+    p.add_argument("--object-artifact")
+    p.set_defaults(func=_cmd_benchmark_skillpixel)
 
     p = sub.add_parser(
         "export-skillpixel",

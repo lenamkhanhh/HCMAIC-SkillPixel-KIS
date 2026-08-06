@@ -64,6 +64,62 @@ Runtime evidence on this machine:
   cached; no fallback index was written.
 - No network download or Kaggle credential was used.
 
+## Current SOTA benchmark execution (2026-08-06)
+
+The executable benchmark command is now wired through
+`hcmaic benchmark-skillpixel`. It keeps the provider matrix strict: a requested
+SigLIP2/Jina run is either a real local provider/index pair or an explicit
+`unavailable` row with null quality metrics. The first full run was:
+
+```text
+uv run hcmaic benchmark-skillpixel \
+  --raw artifacts/skillpixel-kis-benchmark/runs/2026-08-06-baseline-v0/raw \
+  --index artifacts/skillpixel-kis-benchmark/runs/2026-08-06-baseline-v1/visual/clip-v0 \
+  --questions ../learn/skillpixel/Buoi_08_Mock_contest_KIS/DataMockTest/questions.csv \
+  --corpus ../learn/skillpixel/Buoi_08_Mock_contest_KIS/DataMockTest/corpus.csv \
+  --out artifacts/skillpixel-kis-benchmark/runs/2026-08-06-sota-v0 \
+  --providers clip,siglip2,jina-clip-v2 --no-build-missing
+```
+
+Observed matrix:
+
+| variant | execution | result |
+|---|---|---|
+| V0 / CLIP | validated-local | 512D, 9,835 vectors, 100/100 queries, 100 answers/query, CSV pass |
+| V1 / SigLIP2 | unavailable | `google/siglip2-base-patch16-224` is not cached; no CLIP fallback was used |
+| V2 / Jina CLIP v2 | unavailable | `jinaai/jina-clip-v2` is not cached; no CLIP fallback was used |
+| C0 / visual | validated-local | same exact visual baseline |
+| C1 / visual+OCR | unavailable | no raw-derived validated OCR artifact configured |
+| C2 / visual+object | unavailable | no raw-derived validated object artifact configured |
+| C3 / visual+OCR+object | unavailable | required OCR/object artifacts are absent |
+| C4 / bounded rerank | validated-local | executed over the real CLIP visual candidates; no qrels, therefore no quality score |
+| C5 / text reranker | unavailable | BGE text-reranker artifact/provider is not configured |
+
+The run produced 9 matrix rows, 3 validated-local rows, and a valid
+`submission_2026-08-06-sota-v0.csv`. `validation.json` reports 100 queries and
+no errors. `quality_status` is
+`UNVALIDATED_ON_SKILLPIXEL_QRELS`; no Recall/MRR or model-promotion claim is
+made. The first benchmark run had no `psutil` in the project environment, so
+RAM was null; the harness now has a Windows process-memory fallback and will
+record it on the final rerun.
+
+Required benchmark outputs are kept outside Git under:
+
+```text
+system/artifacts/skillpixel-kis-benchmark/runs/2026-08-06-sota-v0/
+  benchmark_results.csv
+  benchmark_report.md
+  run_manifest.json
+  environment.txt
+  submission_2026-08-06-sota-v0.csv
+  candidates/clip/{results.jsonl,submission.csv,validation.json}
+```
+
+The source-frame identity remains canonical throughout: `faiss_row` resolves
+through `id_map.json` to `feature_row`, `frame_uid`, `video_id`,
+`video_filename`, `source_frame_idx`, and `timestamp_ms`; only
+`video_filename,source_frame_idx` is exported.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`
