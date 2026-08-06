@@ -17,6 +17,7 @@ QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
 CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
 RUN_ROOT = "/kaggle/working/skillpixel-kis-run-v1"
 MODEL_ROOT = "/kaggle/working/models/siglip2-base-patch16-224"
+KAGGLE_INPUT_ROOT = Path("/kaggle/input")
 
 
 def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -37,6 +38,26 @@ def _ensure_repository() -> Path:
             raise FileNotFoundError(f"Packaged source dataset is not mounted: {source}")
         shutil.copytree(source, repository)
     return repository
+
+
+def _resolve_input_path(configured: str, *, suffix: str | None = None) -> str:
+    """Resolve Kaggle's mounted slug without changing the SkillPixel source contract."""
+    candidate = Path(configured)
+    if candidate.exists():
+        return str(candidate)
+    if not KAGGLE_INPUT_ROOT.exists():
+        raise FileNotFoundError(f"Kaggle input root is not mounted: {KAGGLE_INPUT_ROOT}")
+    matches = [path for path in KAGGLE_INPUT_ROOT.rglob(suffix or "*") if path.is_file()]
+    if not matches:
+        raise FileNotFoundError(
+            f"Kaggle input path is missing and no fallback was found: {configured}"
+        )
+    if suffix is None:
+        return str(sorted(matches)[0])
+    parents: dict[Path, int] = {}
+    for match in matches:
+        parents[match.parent] = parents.get(match.parent, 0) + 1
+    return str(max(parents, key=lambda path: (parents[path], str(path))))
 
 
 def _download_public_model() -> None:
@@ -64,11 +85,14 @@ def main() -> int:
         item for item in (source_path, env.get("PYTHONPATH", "")) if item
     )
     _download_public_model()
+    resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4")
+    resolved_questions = _resolve_input_path(QUESTIONS, suffix="questions.csv")
+    resolved_corpus = _resolve_input_path(CORPUS, suffix="corpus.csv")
     env.update(
         {
-            "SKILLPIXEL_RAW_INPUT": RAW_INPUT,
-            "SKILLPIXEL_QUESTIONS": QUESTIONS,
-            "SKILLPIXEL_CORPUS": CORPUS,
+            "SKILLPIXEL_RAW_INPUT": resolved_raw_input,
+            "SKILLPIXEL_QUESTIONS": resolved_questions,
+            "SKILLPIXEL_CORPUS": resolved_corpus,
             "SKILLPIXEL_RUN_ROOT": RUN_ROOT,
             "SKILLPIXEL_SIGLIP2_MODEL": MODEL_ROOT,
             "SKILLPIXEL_DEVICE": "cuda",
@@ -132,9 +156,9 @@ def main() -> int:
         "format": "hcmaic-skillpixel-kis-kaggle-job-v1",
         "source_dataset": SOURCE_DATASET,
         "source_dataset_path": SOURCE_INPUT,
-        "raw_input": RAW_INPUT,
-        "questions": QUESTIONS,
-        "corpus": CORPUS,
+        "raw_input": resolved_raw_input,
+        "questions": resolved_questions,
+        "corpus": resolved_corpus,
         "run_root": RUN_ROOT,
         "model_id": "google/siglip2-base-patch16-224",
         "training_status": "not_run",

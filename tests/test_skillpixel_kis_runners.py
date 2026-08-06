@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.skillpixel_kis_build import load_skillpixel_config, provider_model_kwargs
+from scripts.skillpixel_kis_kaggle_kernel import _resolve_input_path
 
 
 def test_runner_config_expands_environment_variables(tmp_path: Path, monkeypatch):
@@ -37,3 +38,17 @@ def test_runner_model_mapping_is_explicit_and_no_fallback():
         "clip_model": "/models/clip",
         "allow_fallback": False,
     }
+
+
+def test_kaggle_runner_resolves_mounted_video_parent(tmp_path: Path, monkeypatch):
+    mounted = tmp_path / "input" / "kis-skillpixel" / "videos"
+    mounted.mkdir(parents=True)
+    (mounted / "video7020.mp4").write_bytes(b"fixture")
+    monkeypatch.setattr(
+        "scripts.skillpixel_kis_kaggle_kernel.KAGGLE_INPUT_ROOT",
+        tmp_path / "input",
+    )
+
+    assert _resolve_input_path("/kaggle/input/kis-skillpixel/videos", suffix="*.mp4") == str(
+        mounted
+    )
