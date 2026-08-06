@@ -120,6 +120,15 @@ through `id_map.json` to `feature_row`, `frame_uid`, `video_id`,
 `video_filename`, `source_frame_idx`, and `timestamp_ms`; only
 `video_filename,source_frame_idx` is exported.
 
+The reproducibility rerun after commit `4d79217` is stored at
+`artifacts/skillpixel-kis-benchmark/runs/2026-08-06-sota-v1/` with the same
+9-row matrix and valid 100-query submission. Its measured CLIP batch latency
+was `4024.922 ms`, p50 query latency `63.754 ms`, and p95 `126.931 ms` on CPU;
+the generated manifest records the same raw dataset hash and query/corpus
+hashes. RAM was null in that run because the project `uv` environment does not
+include `psutil`; a Windows `GetProcessMemoryInfo` fallback is now implemented
+for the next run.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`

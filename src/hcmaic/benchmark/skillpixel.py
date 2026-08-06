@@ -112,6 +112,8 @@ def _rss_mb() -> float | None:
         if sys.platform != "win32":
             return None
         try:
+            from ctypes import wintypes
+
             class _ProcessMemoryCounters(ctypes.Structure):
                 _fields_ = [
                     ("cb", ctypes.c_ulong),
@@ -128,13 +130,22 @@ def _rss_mb() -> float | None:
 
             counters = _ProcessMemoryCounters()
             counters.cb = ctypes.sizeof(counters)
-            process = ctypes.windll.kernel32.GetCurrentProcess()
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+            get_current_process = ctypes.windll.kernel32.GetCurrentProcess
+            get_current_process.restype = wintypes.HANDLE
+            process = get_current_process()
+            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_process_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            get_process_memory_info.restype = wintypes.BOOL
+            ok = get_process_memory_info(
                 process, ctypes.byref(counters), counters.cb
             )
             if ok:
                 return round(counters.working_set_size / (1024 * 1024), 3)
-        except (AttributeError, OSError, TypeError):
+        except (AttributeError, OSError, TypeError, ctypes.ArgumentError):
             return None
         return None
 
