@@ -50,7 +50,7 @@ class KISRuntime:
         fusion_weights: dict[str, float] | None = None,
         rank_constant: int = 60,
         candidate_multiplier: int = 5,
-        reranker: str = "bounded-v1",
+        reranker: Any = "bounded-v1",
         rerank_timeout_ms: int = 50,
     ) -> KISRuntime:
         retriever = SkillPixelRetriever(index, provider)

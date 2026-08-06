@@ -86,6 +86,29 @@ class _TextChannel:
         ][:top_k]
 
 
+class _RealReranker:
+    name = "cross-encoder:test"
+
+    def rerank(
+        self,
+        candidates: list[FusedCandidate],
+        *,
+        query_text: str | None,
+        top_k: int,
+        candidate_limit: int,
+        timeout_ms: int,
+    ) -> list[FusedCandidate]:
+        assert query_text == "hello"
+        assert candidate_limit >= top_k
+        assert timeout_ms > 0
+        for candidate in candidates[:candidate_limit]:
+            candidate.rerank_score = candidate.final_score + 1.0
+        return sorted(
+            candidates[:candidate_limit],
+            key=lambda candidate: -(candidate.rerank_score or candidate.final_score),
+        )[:top_k]
+
+
 def _make_video(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 2.0, (64, 48))
@@ -189,3 +212,17 @@ def test_vkis_skips_text_channels(visual_retriever: SkillPixelRetriever, tmp_pat
 
     assert output.executed_channels == ("visual",)
     assert output.unavailable_channels["ocr"] == "not_applicable_to_vkis_visual_query"
+
+
+def test_orchestrator_executes_configured_real_reranker(
+    visual_retriever: SkillPixelRetriever,
+):
+    orchestrator = KISHybridOrchestrator(
+        visual_retriever,
+        reranker=_RealReranker(),
+    )
+
+    output = orchestrator.search(KISQuery("Q3", "TKIS", text="hello", top_k=2))
+
+    assert orchestrator.reranker == "cross-encoder:test"
+    assert all(result.rerank_score is not None for result in output.results)

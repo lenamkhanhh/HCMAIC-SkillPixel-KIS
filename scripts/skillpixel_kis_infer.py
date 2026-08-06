@@ -89,6 +89,31 @@ def _load_optional_channels(
     return channels, status
 
 
+def _build_reranker(config: dict[str, Any]) -> Any:
+    setting = str(config.get("reranker", "bounded-v1")).strip()
+    if setting in {"bounded-v1", "none"}:
+        return setting
+    if setting not in {"cross-encoder", "cross_encoder"}:
+        raise ValueError(f"unsupported reranker: {setting}")
+    from hcmaic.retrieval.rerank import CrossEncoderReranker
+
+    model_path_value = str(config.get("reranker_model_path", "")).strip()
+    return CrossEncoderReranker(
+        model=str(
+            config.get(
+                "reranker_model",
+                CrossEncoderReranker.DEFAULT_MODEL,
+            )
+        ),
+        model_path=Path(model_path_value) if model_path_value else None,
+        device=str(config.get("device", "cpu")),
+        batch_size=int(config.get("reranker_batch_size", 16)),
+        max_length=int(config.get("reranker_max_length", 256)),
+        allow_model_download=_as_bool(config.get("allow_model_download"), default=False),
+        local_files_only=_as_bool(config.get("local_files_only"), default=True),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     from hcmaic.benchmark.hybrid import benchmark_runtime_candidate
     from hcmaic.benchmark.skillpixel import SkillPixelBenchmarkConfig
@@ -144,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             fusion_weights={str(key): float(value) for key, value in fusion_weights.items()},
             rank_constant=int(config.get("fusion_rank_constant", 60)),
             candidate_multiplier=int(config.get("candidate_multiplier", 5)),
-            reranker=str(config.get("reranker", "bounded-v1")),
+            reranker=_build_reranker(config),
             rerank_timeout_ms=int(config.get("rerank_timeout_ms", 50)),
         )
         benchmark_config = SkillPixelBenchmarkConfig(

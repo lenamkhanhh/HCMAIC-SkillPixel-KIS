@@ -190,6 +190,7 @@ def main() -> int:
     run_ocr = _env_flag("SKILLPIXEL_RUN_OCR", default=True)
     run_object = _env_flag("SKILLPIXEL_RUN_OBJECT", default=True)
     run_asr = _env_flag("SKILLPIXEL_RUN_ASR", default=False)
+    run_reranker = _env_flag("SKILLPIXEL_RUN_RERANKER", default=False)
     allow_optional_download = _env_flag("SKILLPIXEL_ALLOW_MODEL_DOWNLOAD", default=True)
     if run_ocr:
         _ensure_dependency("paddle", "paddlepaddle>=3.0")
@@ -198,6 +199,8 @@ def main() -> int:
         _ensure_dependency("ultralytics", "ultralytics>=8.3")
     if run_asr:
         _ensure_dependency("faster_whisper", "faster-whisper>=1.1")
+    if run_reranker:
+        _ensure_dependency("sentence_transformers", "sentence-transformers>=3.0")
     repository = _ensure_repository()
     env = os.environ.copy()
     source_path = str(repository / "src")
@@ -230,6 +233,7 @@ def main() -> int:
             "SKILLPIXEL_DEVICE": execution_device,
             "SKILLPIXEL_LOCAL_FILES_ONLY": "true",
             "SKILLPIXEL_ALLOW_MODEL_DOWNLOAD": "true" if allow_optional_download else "false",
+            "SKILLPIXEL_RERANKER": "cross-encoder" if run_reranker else "bounded-v1",
         }
     )
     config = repository / "configs" / "skillpixel_kis.yaml"
@@ -351,6 +355,7 @@ def main() -> int:
             "object": run_object,
             "asr": run_asr,
         },
+        "real_reranker_requested": run_reranker,
         "optional_channel_status": optional_stage_status,
         "allow_optional_model_download": allow_optional_download,
         "training_status": "not_run",

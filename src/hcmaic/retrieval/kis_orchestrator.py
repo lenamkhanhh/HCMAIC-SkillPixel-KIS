@@ -23,6 +23,21 @@ class TextRetrievalChannel(Protocol):
         ...
 
 
+class RealReranker(Protocol):
+    name: str
+
+    def rerank(
+        self,
+        candidates: list[FusedCandidate],
+        *,
+        query_text: str | None,
+        top_k: int,
+        candidate_limit: int,
+        timeout_ms: int,
+    ) -> list[FusedCandidate]:
+        ...
+
+
 @dataclass(frozen=True)
 class KISHybridOutput:
     query: KISQuery
@@ -168,7 +183,7 @@ class KISHybridOrchestrator:
         rank_constant: int = 60,
         candidate_multiplier: int = 5,
         max_per_video: int | None = 5,
-        reranker: str = "bounded-v1",
+        reranker: str | RealReranker = "bounded-v1",
         rerank_timeout_ms: int = 50,
         asr_enabled: bool = False,
     ) -> None:
@@ -176,8 +191,16 @@ class KISHybridOrchestrator:
             raise ValueError("fusion_method must be 'rrf' or 'weighted'")
         if rank_constant < 1 or candidate_multiplier < 1:
             raise ValueError("rank_constant/candidate_multiplier must be >= 1")
-        if reranker not in {"bounded-v1", "none"}:
-            raise ValueError("reranker must be 'bounded-v1' or 'none'")
+        real_reranker: RealReranker | None = None
+        if isinstance(reranker, str):
+            if reranker not in {"bounded-v1", "none"}:
+                raise ValueError("reranker must be 'bounded-v1', 'none' or a real reranker")
+            reranker_name = reranker
+        else:
+            if not callable(getattr(reranker, "rerank", None)):
+                raise ValueError("configured real reranker must expose rerank(...)")
+            real_reranker = reranker
+            reranker_name = str(getattr(reranker, "name", "real-reranker"))
         if rerank_timeout_ms < 1:
             raise ValueError("rerank_timeout_ms must be >= 1")
         self.visual_retriever = visual_retriever
@@ -190,7 +213,8 @@ class KISHybridOrchestrator:
         self.rank_constant = rank_constant
         self.candidate_multiplier = candidate_multiplier
         self.max_per_video = max_per_video
-        self.reranker = reranker
+        self.reranker = reranker_name
+        self._real_reranker = real_reranker
         self.rerank_timeout_ms = rerank_timeout_ms
         self.asr_enabled = asr_enabled
 
@@ -228,7 +252,7 @@ class KISHybridOrchestrator:
         return hits, unavailable, executed
 
     def _fuse(
-        self, channels: dict[str, list[ChannelHit]], *, top_k: int
+        self, query: KISQuery, channels: dict[str, list[ChannelHit]], *, top_k: int
     ) -> list[FusedCandidate]:
         pool_size = top_k * self.candidate_multiplier
         if self.fusion_method == "rrf":
@@ -244,6 +268,14 @@ class KISHybridOrchestrator:
                 top_k=pool_size,
             )
         deduplicated = deduplicate_source_frames(fused)
+        if self._real_reranker is not None:
+            return self._real_reranker.rerank(
+                deduplicated,
+                query_text=query.text,
+                top_k=top_k,
+                candidate_limit=max(top_k, pool_size),
+                timeout_ms=self.rerank_timeout_ms,
+            )
         if self.reranker == "bounded-v1":
             return bounded_rerank(
                 deduplicated,
@@ -337,7 +369,7 @@ class KISHybridOrchestrator:
         optional_hits, unavailable, optional_executed = self._optional_hits(query, channel_top_k)
         channels.update(optional_hits)
         executed = ["visual", *optional_executed]
-        fused = self._fuse(channels, top_k=query.top_k)
+        fused = self._fuse(query, channels, top_k=query.top_k)
         results = self._to_results(
             query,
             fused,
