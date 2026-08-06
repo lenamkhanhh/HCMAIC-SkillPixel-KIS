@@ -41,10 +41,11 @@ def _configured_dimension(config: Any) -> int:
     ):
         if candidate is None:
             continue
-        value = getattr(candidate, "projection_dim", None)
-        if value is not None:
-            return int(value)
-    raise RuntimeError("SigLIP2 model config has no projection_dim")
+        for field in ("projection_dim", "projection_size"):
+            value = getattr(candidate, field, None)
+            if value is not None:
+                return int(value)
+    raise RuntimeError("SigLIP2 model config has no projection_dim/projection_size")
 
 
 class RealSiglip2EmbeddingProvider(EmbeddingProvider):
