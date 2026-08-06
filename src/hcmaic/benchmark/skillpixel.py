@@ -36,6 +36,31 @@ QUALITY_UNVALIDATED = "UNVALIDATED_ON_SKILLPIXEL_QRELS"
 QUALITY_VALIDATED = "VALIDATED_ON_SKILLPIXEL_QRELS"
 VISUAL_VARIANTS = ("V0", "V1", "V2")
 CHANNEL_VARIANTS = ("C0", "C1", "C2", "C3", "C4", "C5")
+EVIDENCE_FIELDS = (
+    "query_id",
+    "query_type",
+    "query_order",
+    "rank",
+    "video_id",
+    "video_filename",
+    "keyframe_id",
+    "frame_uid",
+    "source_frame_idx",
+    "timestamp_ms",
+    "preview_path",
+    "image_path",
+    "visual_score",
+    "ocr_score",
+    "object_score",
+    "asr_score",
+    "rrf_score",
+    "rerank_score",
+    "provider",
+    "model",
+    "revision",
+    "faiss_row",
+    "feature_row",
+)
 
 
 class SkillPixelBenchmarkError(RuntimeError):
@@ -184,6 +209,269 @@ def _answer_cell(hit: SkillPixelHit) -> str:
     return f"{hit.video_filename},{hit.source_frame_idx}"
 
 
+def _package_version(name: str) -> str | None:
+    try:
+        from importlib.metadata import version
+
+        return version(name)
+    except Exception:
+        return None
+
+
+def _model_registry_entry(
+    *, provider: Any, requested_provider: str, selection: Mapping[str, Any]
+) -> dict[str, Any]:
+    info = provider.info()
+    model_id = str(info.get("model_name", provider.name))
+    model_path: str | None = None
+    try:
+        candidate = Path(model_id)
+        if candidate.is_absolute() and candidate.exists():
+            model_path = str(candidate.resolve())
+    except (OSError, ValueError):
+        model_path = None
+    return {
+        "requested_provider": requested_provider,
+        "selected_provider": provider.name,
+        "model_id": model_id,
+        "revision": info.get("model_revision", info.get("revision", provider.version)),
+        "weights_path": model_path,
+        "weights_available": model_path is not None,
+        "device": info.get("device"),
+        "dtype": info.get("dtype"),
+        "dimension": provider.dimension,
+        "preprocess_hash": info.get("preprocess_hash"),
+        "dependencies": {
+            "torch": _package_version("torch"),
+            "transformers": _package_version("transformers"),
+        },
+        "network_required": not bool(info.get("local_files_only", True)),
+        "fallback": selection.get("fallback"),
+        "provider_execution": "validated-local",
+        "training_status": "not_run",
+    }
+
+
+def _mapping_validation(index: Any) -> dict[str, Any]:
+    errors: list[str] = []
+    for row, entry in enumerate(index.id_map):
+        record = index.catalog[row]
+        source_frame_idx = (
+            record.source_frame_idx
+            if record.source_frame_idx is not None
+            else record.frame_idx
+        )
+        expected = {
+            "faiss_row": row,
+            "feature_row": row,
+            "frame_uid": record.frame_id,
+            "video_id": record.video_id,
+            "source_frame_idx": source_frame_idx,
+            "timestamp_ms": record.timestamp_ms,
+        }
+        for field, value in expected.items():
+            if entry.get(field) != value:
+                errors.append(
+                    f"row {row}: {field}={entry.get(field)!r} != {value!r}"
+                )
+        frame_count = entry.get("frame_count")
+        if frame_count is not None and not 0 <= int(source_frame_idx) < int(frame_count):
+            errors.append(f"row {row}: source_frame_idx is outside frame_count")
+    faiss_ntotal = int(getattr(index.faiss_index, "ntotal", -1))
+    if faiss_ntotal != len(index.id_map):
+        errors.append(f"faiss ntotal {faiss_ntotal} != id_map rows {len(index.id_map)}")
+    return {
+        "ok": not errors,
+        "n_checked": len(index.id_map),
+        "n_errors": len(errors),
+        "errors": errors[:20],
+        "faiss_ntotal": faiss_ntotal,
+        "id_map_rows": len(index.id_map),
+    }
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _write_evidence_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(EVIDENCE_FIELDS))
+        writer.writeheader()
+        writer.writerows({field: row.get(field) for field in EVIDENCE_FIELDS} for row in rows)
+
+
+def _write_checksums(output_dir: Path) -> Path:
+    checksum_path = Path(output_dir) / "checksums.sha256"
+    lines: list[str] = []
+    for path in sorted(Path(output_dir).rglob("*")):
+        if not path.is_file() or path == checksum_path:
+            continue
+        lines.append(f"{_sha256_file(path)}  {path.relative_to(output_dir).as_posix()}")
+    checksum_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return checksum_path
+
+
+def _write_visual_run_contracts(
+    *,
+    config: SkillPixelBenchmarkConfig,
+    candidate_dir: Path,
+    questions: list[SkillPixelQuestion],
+    results: Mapping[str, list[SkillPixelHit]],
+    provider: Any,
+    requested_provider: str,
+    selection: Mapping[str, Any],
+    index: Any,
+    raw_manifest: Mapping[str, Any],
+) -> dict[str, Path]:
+    model = _model_registry_entry(
+        provider=provider, requested_provider=requested_provider, selection=selection
+    )
+    evidence_rows: list[dict[str, Any]] = []
+    status_rows: list[dict[str, Any]] = []
+    query_root = Path(config.questions_path).parent
+    for query_order, question in enumerate(questions):
+        hits = list(results.get(question.query_id, []))
+        status_rows.append(
+            {
+                "query_id": question.query_id,
+                "query_type": question.task,
+                "query_order": query_order,
+                "status": "ok" if hits else "empty",
+                "error": None if hits else "retrieval returned no hits",
+                "n_results": len(hits),
+                "top_k": config.top_k,
+                "channels": ["visual"],
+                "provider": provider.name,
+                "model": model["model_id"],
+                "revision": model["revision"],
+            }
+        )
+        for hit in hits[: config.top_k]:
+            preview_path = (Path(config.raw_root) / hit.image_path).resolve()
+            evidence_rows.append(
+                {
+                    "query_id": hit.query_id,
+                    "query_type": hit.task,
+                    "query_order": query_order,
+                    "rank": hit.rank,
+                    "video_id": hit.video_id,
+                    "video_filename": hit.video_filename,
+                    "keyframe_id": hit.keyframe_id,
+                    "frame_uid": hit.frame_uid,
+                    "source_frame_idx": hit.source_frame_idx,
+                    "timestamp_ms": hit.timestamp_ms,
+                    "preview_path": str(preview_path),
+                    "image_path": hit.image_path,
+                    "visual_score": hit.visual_score,
+                    "ocr_score": None,
+                    "object_score": None,
+                    "asr_score": None,
+                    "rrf_score": None,
+                    "rerank_score": None,
+                    "provider": provider.name,
+                    "model": model["model_id"],
+                    "revision": model["revision"],
+                    "faiss_row": hit.faiss_row,
+                    "feature_row": hit.feature_row,
+                }
+            )
+
+    evidence_top100_path = candidate_dir / "retrieval_evidence_top100.jsonl"
+    evidence_top20_path = candidate_dir / "retrieval_evidence_top20.jsonl"
+    evidence_top100_csv = candidate_dir / "retrieval_evidence_top100.csv"
+    evidence_top20_csv = candidate_dir / "retrieval_evidence_top20.csv"
+    _write_jsonl(evidence_top100_path, evidence_rows)
+    top20_rows = [row for row in evidence_rows if int(row["rank"]) <= 20]
+    _write_jsonl(evidence_top20_path, top20_rows)
+    _write_evidence_csv(evidence_top100_csv, evidence_rows)
+    _write_evidence_csv(evidence_top20_csv, top20_rows)
+    query_status_path = candidate_dir / "query_status.jsonl"
+    _write_jsonl(query_status_path, status_rows)
+
+    raw_stats = validate_raw_dataset(config.raw_root)
+    missing_query_images = [
+        question.query_id
+        for question in questions
+        if question.task == "VKIS"
+        and not _resolve_query_image(question, query_root).is_file()
+    ]
+    corpus_videos = 0
+    if Path(config.corpus_path).is_file():
+        with Path(config.corpus_path).open(newline="", encoding="utf-8-sig") as handle:
+            corpus_videos = sum(1 for _ in csv.DictReader(handle))
+    mapping = _mapping_validation(index)
+    preflight = {
+        "format": "hcmaic-skillpixel-kis-preflight-v1",
+        "created_at": dt.datetime.now(dt.UTC).isoformat(),
+        "code_sha": _code_sha(),
+        "raw_video_source": True,
+        "btc_artifacts_used": False,
+        "training_status": "not_run",
+        "quality_status": (
+            QUALITY_VALIDATED if config.qrels else "UNVALIDATED_ON_HCMAIC"
+        ),
+        "raw_root": str(Path(config.raw_root).resolve()),
+        "dataset_hash": raw_manifest.get("dataset_hash"),
+        "sampling_policy": raw_manifest.get("sampling_policy"),
+        "n_videos": raw_stats.n_videos,
+        "n_sampled_frames": raw_stats.n_frames,
+        "questions_path": str(Path(config.questions_path).resolve()),
+        "query_file_hash": _sha256_file(config.questions_path),
+        "n_queries": len(questions),
+        "n_tkis": sum(item.task == "TKIS" for item in questions),
+        "n_vkis": sum(item.task == "VKIS" for item in questions),
+        "query_order": [item.query_id for item in questions],
+        "query_order_preserved": list(results) == [item.query_id for item in questions],
+        "missing_query_images": missing_query_images,
+        "corpus_path": str(Path(config.corpus_path).resolve()),
+        "corpus_file_hash": (
+            _sha256_file(config.corpus_path) if Path(config.corpus_path).is_file() else None
+        ),
+        "n_corpus_videos": corpus_videos,
+        "index_dir": str(Path(config.index_dir).resolve()),
+        "index_type": "IndexFlatIP",
+        "n_vectors": index.size,
+        "embedding_dimension": index.dimension,
+        "mapping_validation": mapping,
+        "model": model,
+    }
+    preflight_path = candidate_dir / "preflight_report.json"
+    preflight_path.write_text(
+        json.dumps(preflight, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    model_registry_path = candidate_dir / "model_registry.json"
+    model_registry_path.write_text(
+        json.dumps(
+            {
+                "format": "hcmaic-skillpixel-kis-model-registry-v1",
+                "training_status": "not_run",
+                "quality_status": preflight["quality_status"],
+                "candidates": [model],
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    checksums_path = _write_checksums(candidate_dir)
+    return {
+        "evidence_top100": evidence_top100_path,
+        "evidence_top20": evidence_top20_path,
+        "evidence_top100_csv": evidence_top100_csv,
+        "evidence_top20_csv": evidence_top20_csv,
+        "query_status": query_status_path,
+        "preflight": preflight_path,
+        "model_registry": model_registry_path,
+        "checksums": checksums_path,
+    }
+
+
 def _metrics(
     results: Mapping[str, list[SkillPixelHit]], qrels: dict[str, Any] | None
 ) -> dict[str, float | None]:
@@ -299,6 +587,17 @@ def unavailable_candidate_row(
         "metrics": {},
         "submission_validation": "not-run",
         "status": "unavailable",
+        "model_registry": {
+            "requested_provider": requested_provider,
+            "selected_provider": None,
+            "model_id": None,
+            "revision": None,
+            "weights_path": None,
+            "weights_available": False,
+            "provider_execution": "unavailable",
+            "fallback": None,
+            "training_status": "not_run",
+        },
         "error": error,
     }
 
@@ -386,6 +685,17 @@ def benchmark_visual_candidate(
         )
 
     info = provider.info()
+    contract_paths = _write_visual_run_contracts(
+        config=config,
+        candidate_dir=candidate_dir,
+        questions=questions,
+        results=results,
+        provider=provider,
+        requested_provider=requested_provider,
+        selection=selection,
+        index=index,
+        raw_manifest=raw_manifest,
+    )
     row = _base_row(
         config,
         variant=variant,
@@ -420,6 +730,16 @@ def benchmark_visual_candidate(
             "n_tkis": len(tkis),
             "n_vkis": len(vkis),
             "n_vectors": index.size,
+            "model_registry": _model_registry_entry(
+                provider=provider,
+                requested_provider=requested_provider,
+                selection=selection,
+            ),
+            "evidence_top100": str(contract_paths["evidence_top100"]),
+            "evidence_top20": str(contract_paths["evidence_top20"]),
+            "query_status": str(contract_paths["query_status"]),
+            "preflight_report": str(contract_paths["preflight"]),
+            "checksums": str(contract_paths["checksums"]),
         }
     )
     return row
@@ -622,6 +942,53 @@ def write_benchmark_outputs(
         encoding="utf-8",
     )
 
+    model_registry_path = output_dir / "model_registry.json"
+    model_registry_path.write_text(
+        json.dumps(
+            {
+                "format": "hcmaic-skillpixel-kis-model-registry-v1",
+                "training_status": "not_run",
+                "quality_status": (
+                    QUALITY_VALIDATED if config.qrels else "UNVALIDATED_ON_HCMAIC"
+                ),
+                "candidates": [row.get("model_registry") for row in rows],
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    preflight_path = output_dir / "preflight_report.json"
+    if not preflight_path.is_file():
+        preflight_path.write_text(
+            json.dumps(
+                {
+                    "format": "hcmaic-skillpixel-kis-preflight-v1",
+                    "code_sha": manifest["code_sha"],
+                    "raw_video_source": True,
+                    "btc_artifacts_used": False,
+                    "training_status": "not_run",
+                    "quality_status": (
+                        QUALITY_VALIDATED if config.qrels else "UNVALIDATED_ON_HCMAIC"
+                    ),
+                    "dataset_hash": manifest["dataset_hash"],
+                    "query_file_hash": manifest["query_file_hash"],
+                    "mapping_validation": {"ok": False, "n_errors": None},
+                    "note": (
+                        "candidate-specific preflight is copied when a visual candidate "
+                        "is validated"
+                    ),
+                },
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     report_path = output_dir / "benchmark_report.md"
     lines = [
         "# SkillPixel KIS benchmark report",
@@ -672,11 +1039,15 @@ def write_benchmark_outputs(
         + "\n",
         encoding="utf-8",
     )
+    checksums_path = _write_checksums(output_dir)
     return {
         "csv": csv_path,
         "report": report_path,
         "manifest": manifest_path,
         "environment": environment_path,
+        "model_registry": model_registry_path,
+        "preflight": preflight_path,
+        "checksums": checksums_path,
     }
 
 
@@ -784,6 +1155,18 @@ def run_skillpixel_benchmark(
                 Path(config.output_dir) / f"submission_{Path(config.output_dir).name}.csv"
             )
             shutil.copyfile(source_submission, target_submission)
+        source_contract_dir = Path(str(best_row["artifact_dir"]))
+        for contract_name in (
+            "retrieval_evidence_top100.jsonl",
+            "retrieval_evidence_top20.jsonl",
+            "retrieval_evidence_top100.csv",
+            "retrieval_evidence_top20.csv",
+            "query_status.jsonl",
+            "preflight_report.json",
+        ):
+            source_contract = source_contract_dir / contract_name
+            if source_contract.is_file():
+                shutil.copyfile(source_contract, Path(config.output_dir) / contract_name)
     else:
         promotion = "blocked: no validated visual provider/index pair"
     paths = write_benchmark_outputs(config, rows, promotion_decision=promotion)

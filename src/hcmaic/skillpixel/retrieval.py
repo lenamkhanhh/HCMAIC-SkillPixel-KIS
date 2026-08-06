@@ -29,6 +29,7 @@ class SkillPixelHit:
     task: str
     rank: int
     frame_uid: str
+    keyframe_id: int | str
     video_id: str
     video_filename: str
     source_frame_idx: int
@@ -44,6 +45,7 @@ class SkillPixelHit:
             "task": self.task,
             "rank": self.rank,
             "frame_uid": self.frame_uid,
+            "keyframe_id": self.keyframe_id,
             "video_id": self.video_id,
             "video_filename": self.video_filename,
             "source_frame_idx": self.source_frame_idx,
@@ -125,6 +127,7 @@ class SkillPixelRetriever:
                 task=task,
                 rank=rank,
                 frame_uid=str(metadata["frame_uid"]),
+                keyframe_id=metadata["keyframe_id"],
                 video_id=str(metadata["video_id"]),
                 video_filename=str(metadata["video_filename"]),
                 source_frame_idx=int(metadata["source_frame_idx"]),
