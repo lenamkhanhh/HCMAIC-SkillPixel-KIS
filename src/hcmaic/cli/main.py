@@ -565,6 +565,27 @@ def _cmd_benchmark_skillpixel(args: argparse.Namespace) -> int:
     return 0 if has_visual else 2
 
 
+def _cmd_package_kaggle_skillpixel(args: argparse.Namespace) -> int:
+    from hcmaic.benchmark.kaggle import KagglePackageConfig, build_kaggle_package
+
+    try:
+        outputs = build_kaggle_package(
+            KagglePackageConfig(
+                output_dir=Path(args.out),
+                raw_input=Path(args.raw_input),
+                questions_path=Path(args.questions),
+                corpus_path=Path(args.corpus),
+                index_dir=Path(args.index) if args.index else None,
+                max_file_bytes=args.max_file_bytes,
+            )
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({key: str(value) for key, value in outputs.items()}, ensure_ascii=False))
+    return 0
+
+
 def _cmd_benchmark_kis(args: argparse.Namespace) -> int:
     from hcmaic.evaluation.kis import (
         evaluate_kis_runtime,
@@ -927,6 +948,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ocr-artifact")
     p.add_argument("--object-artifact")
     p.set_defaults(func=_cmd_benchmark_skillpixel)
+
+    p = sub.add_parser(
+        "package-kaggle-skillpixel",
+        help="Write a metadata-only Kaggle recipe without raw/model/generated artifacts",
+    )
+    p.add_argument("--raw-input", required=True)
+    p.add_argument("--questions", required=True)
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--index")
+    p.add_argument("--out", required=True)
+    p.add_argument("--max-file-bytes", type=int, default=5 * 1024 * 1024)
+    p.set_defaults(func=_cmd_package_kaggle_skillpixel)
 
     p = sub.add_parser(
         "export-skillpixel",

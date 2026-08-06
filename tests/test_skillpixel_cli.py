@@ -100,6 +100,19 @@ def test_skillpixel_cli_commands_are_available():
             "benchmark",
         ]
     )
+    kaggle_package = parser.parse_args(
+        [
+            "package-kaggle-skillpixel",
+            "--raw-input",
+            "raw",
+            "--questions",
+            "questions.csv",
+            "--corpus",
+            "corpus.csv",
+            "--out",
+            "package",
+        ]
+    )
 
     assert ingest.command == "ingest-raw"
     assert ingest.stride_frames == 10
@@ -112,3 +125,4 @@ def test_skillpixel_cli_commands_are_available():
     assert kis_serve.command == "serve-kis"
     assert kis_benchmark.command == "benchmark-kis"
     assert sota_benchmark.command == "benchmark-skillpixel"
+    assert kaggle_package.command == "package-kaggle-skillpixel"

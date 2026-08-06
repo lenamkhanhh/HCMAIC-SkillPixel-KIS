@@ -129,6 +129,28 @@ hashes. RAM was null in that run because the project `uv` environment does not
 include `psutil`; a Windows `GetProcessMemoryInfo` fallback is now implemented
 for the next run.
 
+## Kaggle artifact packaging
+
+The packaging command was executed successfully against the current raw
+dataset, questions, corpus, and CLIP index:
+
+```text
+uv run hcmaic package-kaggle-skillpixel \
+  --raw-input artifacts/skillpixel-kis-benchmark/runs/2026-08-06-baseline-v0/raw \
+  --questions ../learn/skillpixel/Buoi_08_Mock_contest_KIS/DataMockTest/questions.csv \
+  --corpus ../learn/skillpixel/Buoi_08_Mock_contest_KIS/DataMockTest/corpus.csv \
+  --index artifacts/skillpixel-kis-benchmark/runs/2026-08-06-baseline-v1/visual/clip-v0 \
+  --out artifacts/skillpixel-kis-benchmark/runs/2026-08-06-kaggle-package-v1
+```
+
+`package_manifest.json` records the raw dataset hash
+`c38941ad60411210009d219d4c1880b9ff5139f2fffe5256e853d656b42f7eb4`, the
+questions/corpus hashes, and the index-manifest hash. The package contains
+only `README.md`, `run_skillpixel_kis.py`, the manifest, and checksums; all
+unsafe-content flags are false. It does not upload to Kaggle and does not
+handle `kaggle.json`, secrets, raw videos, model weights, embeddings, or
+generated FAISS indexes.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`
