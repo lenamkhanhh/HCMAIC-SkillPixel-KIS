@@ -58,9 +58,12 @@ def main() -> int:
     _ensure_dependency("cv2", "opencv-python-headless>=4.9")
     _ensure_dependency("huggingface_hub", "huggingface_hub>=0.24")
     repository = _ensure_repository()
-    _run([sys.executable, "-m", "pip", "install", "--quiet", "-e", str(repository), "--no-deps"])
-    _download_public_model()
     env = os.environ.copy()
+    source_path = str(repository / "src")
+    env["PYTHONPATH"] = os.pathsep.join(
+        item for item in (source_path, env.get("PYTHONPATH", "")) if item
+    )
+    _download_public_model()
     env.update(
         {
             "SKILLPIXEL_RAW_INPUT": RAW_INPUT,
