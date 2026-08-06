@@ -1,16 +1,17 @@
-"""Kaggle script entrypoint: clone this commit, then call repository runners."""
+"""Kaggle script entrypoint: unpack the packaged runners and execute KIS."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-REPOSITORY_URL = "https://github.com/lenamkhanhh/HCMAIC-2026-system.git"
-REPOSITORY_BRANCH = "codex/feat/skillpixel-kis-sota-benchmark"
+SOURCE_DATASET = "khanhss/hcmaic-skillpixel-kis-source-20260806"
+SOURCE_INPUT = "/kaggle/input/hcmaic-skillpixel-kis-source-20260806"
 RAW_INPUT = "/kaggle/input/kis-skillpixel/videos"
 QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
 CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
@@ -31,18 +32,10 @@ def _ensure_dependency(module: str, package: str) -> None:
 def _ensure_repository() -> Path:
     repository = Path("/kaggle/working/hcmaic")
     if not repository.exists():
-        _run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                REPOSITORY_BRANCH,
-                REPOSITORY_URL,
-                str(repository),
-            ]
-        )
+        source = Path(SOURCE_INPUT)
+        if not source.exists():
+            raise FileNotFoundError(f"Packaged source dataset is not mounted: {source}")
+        shutil.copytree(source, repository)
     return repository
 
 
@@ -134,8 +127,8 @@ def main() -> int:
     )
     manifest = {
         "format": "hcmaic-skillpixel-kis-kaggle-job-v1",
-        "repository": REPOSITORY_URL,
-        "repository_branch": REPOSITORY_BRANCH,
+        "source_dataset": SOURCE_DATASET,
+        "source_dataset_path": SOURCE_INPUT,
         "raw_input": RAW_INPUT,
         "questions": QUESTIONS,
         "corpus": CORPUS,
