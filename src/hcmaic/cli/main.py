@@ -179,12 +179,21 @@ def _cmd_build_skillpixel_index(args: argparse.Namespace) -> int:
     from hcmaic.skillpixel.index import build_skillpixel_index
 
     try:
+        model_kwargs: dict[str, str] = {}
+        if args.model_path:
+            model_key = {
+                "siglip2": "siglip2_model",
+                "clip": "clip_model",
+                "jina-clip-v2": "jina_model",
+            }[args.provider]
+            model_kwargs[model_key] = args.model_path
         provider, selection = get_real_visual_provider(
             prefer=args.provider,
             device=args.device,
             local_files_only=not args.allow_network,
             batch_size=args.batch_size,
             allow_fallback=not args.strict_provider,
+            **model_kwargs,
         )
         index = build_skillpixel_index(Path(args.input), Path(args.output), provider)
         provider_report_path = Path(args.output) / "provider_report.json"
@@ -232,6 +241,14 @@ def _cmd_retrieve_skillpixel(args: argparse.Namespace) -> int:
         print(f"error: unsupported index provider {expected_provider!r}", file=sys.stderr)
         return 2
     try:
+        model_kwargs: dict[str, str] = {}
+        if args.model_path:
+            model_key = {
+                "siglip2": "siglip2_model",
+                "clip": "clip_model",
+                "jina-clip-v2": "jina_model",
+            }[prefer]
+            model_kwargs[model_key] = args.model_path
         provider, selection = get_real_visual_provider(
             prefer=prefer,
             device=args.device,
@@ -239,6 +256,7 @@ def _cmd_retrieve_skillpixel(args: argparse.Namespace) -> int:
             revision=args.revision or index.provider_info.get("model_revision"),
             batch_size=args.batch_size,
             allow_fallback=not args.strict_provider,
+            **model_kwargs,
         )
         retriever = SkillPixelRetriever(index, provider)
         questions_path = Path(args.questions)
@@ -538,6 +556,15 @@ def _cmd_benchmark_skillpixel(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             allow_network=args.allow_network,
             build_missing=not args.no_build_missing,
+            model_paths={
+                provider: path
+                for provider, path in {
+                    "clip": args.clip_model,
+                    "siglip2": args.siglip2_model,
+                    "jina-clip-v2": args.jina_model,
+                }.items()
+                if path
+            },
         )
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -841,6 +868,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument(
+        "--model-path",
+        help="Explicit local path or model ID for the selected provider",
+    )
+    p.add_argument(
         "--allow-network",
         action="store_true",
         help="Permit model fetches; default is local-files-only",
@@ -868,6 +899,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--revision")
+    p.add_argument(
+        "--model-path",
+        help="Explicit local path or model ID matching the persisted index provider",
+    )
     p.add_argument("--allow-network", action="store_true")
     p.add_argument(
         "--strict-provider",
@@ -941,6 +976,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=100)
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--clip-model")
+    p.add_argument("--siglip2-model")
+    p.add_argument("--jina-model")
     p.add_argument("--allow-network", action="store_true")
     p.add_argument("--no-build-missing", action="store_true")
     p.add_argument("--qrels")

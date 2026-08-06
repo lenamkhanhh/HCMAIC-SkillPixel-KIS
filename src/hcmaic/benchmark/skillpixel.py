@@ -688,6 +688,7 @@ def run_skillpixel_benchmark(
     batch_size: int = 32,
     allow_network: bool = False,
     build_missing: bool = True,
+    model_paths: Mapping[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Path]]:
     """Run V0/V1/V2, optional channel ablation, and package one matrix."""
     raw_manifest = json.loads(
@@ -706,12 +707,22 @@ def run_skillpixel_benchmark(
     for provider_id in provider_ids:
         variant = variant_for_provider.get(provider_id, provider_id)
         try:
+            model_kwargs: dict[str, str] = {}
+            model_path = (model_paths or {}).get(provider_id)
+            if model_path:
+                model_key = {
+                    "siglip2": "siglip2_model",
+                    "clip": "clip_model",
+                    "jina-clip-v2": "jina_model",
+                }[provider_id]
+                model_kwargs[model_key] = model_path
             provider, selection = get_real_visual_provider(
                 prefer=provider_id,
                 device=device,
                 local_files_only=not allow_network,
                 batch_size=batch_size,
                 allow_fallback=False,
+                **model_kwargs,
             )
             if provider.name != provider_id:
                 raise SkillPixelBenchmarkError(
