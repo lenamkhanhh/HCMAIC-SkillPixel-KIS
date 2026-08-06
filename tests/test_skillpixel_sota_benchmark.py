@@ -92,6 +92,53 @@ def test_visual_candidate_writes_submission_and_provenance(tmp_path: Path):
     assert row["metrics"]["recall@100"] is None
     assert (tmp_path / "benchmark" / "submission.csv").is_file()
     assert (tmp_path / "benchmark" / "validation.json").is_file()
+    evidence_path = tmp_path / "benchmark" / "retrieval_evidence_top100.jsonl"
+    evidence_rows = [
+        json.loads(line)
+        for line in evidence_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert evidence_path.is_file()
+    assert (tmp_path / "benchmark" / "retrieval_evidence_top20.jsonl").is_file()
+    assert (tmp_path / "benchmark" / "retrieval_evidence_top100.csv").is_file()
+    assert (tmp_path / "benchmark" / "query_status.jsonl").is_file()
+    assert (tmp_path / "benchmark" / "preflight_report.json").is_file()
+    assert (tmp_path / "benchmark" / "model_registry.json").is_file()
+    assert (tmp_path / "benchmark" / "checksums.sha256").is_file()
+    assert len(evidence_rows) == 2 * 100
+    assert {
+        "query_id",
+        "query_type",
+        "query_order",
+        "rank",
+        "video_id",
+        "video_filename",
+        "keyframe_id",
+        "frame_uid",
+        "source_frame_idx",
+        "timestamp_ms",
+        "preview_path",
+        "visual_score",
+        "ocr_score",
+        "object_score",
+        "asr_score",
+        "rrf_score",
+        "rerank_score",
+        "provider",
+        "model",
+        "revision",
+        "faiss_row",
+        "feature_row",
+    }.issubset(evidence_rows[0])
+    status_rows = [
+        json.loads(line)
+        for line in (tmp_path / "benchmark" / "query_status.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert [row["query_id"] for row in status_rows] == ["T1", "V1"]
+    assert all(row["status"] == "ok" for row in status_rows)
 
 
 def test_unavailable_candidate_never_reports_fake_quality():
