@@ -1,0 +1,15 @@
+project: skillpixel_kis
+dataset_id: skillpixel-local
+raw_input: ${SKILLPIXEL_RAW_INPUT}
+questions: ${SKILLPIXEL_QUESTIONS}
+corpus: ${SKILLPIXEL_CORPUS}
+run_root: ${SKILLPIXEL_RUN_ROOT:-artifacts/skillpixel-kis-sota/runs/local}
+index_dir: ${SKILLPIXEL_INDEX_DIR:-}
+stride_frames: 10
+provider: siglip2
+model_id: V1
+model_path: ${SKILLPIXEL_SIGLIP2_MODEL:-google/siglip2-base-patch16-224}
+revision: ${SKILLPIXEL_MODEL_REVISION:-}
+device: ${SKILLPIXEL_DEVICE:-cpu}
+batch_size: 32
+local_files_only: ${SKILLPIXEL_LOCAL_FILES_ONLY:-true}
