@@ -1122,6 +1122,18 @@ deprecation warning; Ruff passed; Mypy passed for 65 source files; diff check
 passed. Unrelated pre-existing untracked documentation directories were left
 untouched and unstaged.
 
+Continuation commit ledger:
+
+- 6a084e8: resume the self-generated SkillPixel index on Kaggle.
+- 7041226: resolve validator index path handling.
+- b29991e: match equivalent local/provider model revisions.
+- dac482d: make SigLIP2 download resumable with retries.
+- 6d791ba: record unsupported GPU capability fallback.
+- aa03fdb, c6f8371, c54451c, ec4eb6c: resolve Kaggle mounts and Python 3.12
+  source-only packaging.
+- e5b0059 and 28e3c51: add resumable runners and evidence/run contracts.
+- 9e7a856: record the Kaggle V9 end-to-end result in this report.
+
 The current implementation commits are on
 codex/feat/skillpixel-kis-sota-benchmark and are pushed to the writable staging
 remote. The existing draft PR is
