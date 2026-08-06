@@ -25,7 +25,7 @@ V0 baseline evidence:
 ```text
 raw ingestion: 250 videos, 97,236 source frames, 9,835 sampled frames
 sampling: uniform_stride_10_v1, max_nearest_frame_error=9
-dataset_hash: 66b95d050f24287de9f107ad6810ac75b28f717f3e717a64868d30f88f977bba
+dataset_hash: c38941ad60411210009d219d4c1880b9ff5139f2fffe5256e853d656b42f7eb4
 provider: real local CLIP openai/clip-vit-base-patch32, 512D, CPU
 index: normalized float32 exact FAISS IndexFlatIP
 retrieval: 100 queries, top_k=100
@@ -151,11 +151,78 @@ unsafe-content flags are false. It does not upload to Kaggle and does not
 handle `kaggle.json`, secrets, raw videos, model weights, embeddings, or
 generated FAISS indexes.
 
+## Final end-to-end verification (HEAD `a00123b`)
+
+The final index was rebuilt after all source changes at
+`artifacts/skillpixel-kis-benchmark/runs/2026-08-06-baseline-v2/visual/clip-v0`.
+Its `index_manifest.json` and `provider_report.json` both record
+`code_sha=a00123b`, `provider_execution=validated-local`, `provider=clip`,
+model `openai/clip-vit-base-patch32`, revision
+`3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268`, 512 dimensions, L2-normalized
+float32 vectors, and exact `IndexFlatIP`.
+
+Independent checks passed:
+
+- raw validation: 250 videos, 9,835 sampled frames, 0 errors;
+- `faiss.ntotal=9835`, `faiss.d=512`, NumPy oracle and FAISS top-100 row
+  order identical, max score difference `1.19e-7`;
+- `faiss_row -> feature_row -> catalog/frame_uid` round-trip passed, and the
+  dataset hash matched the raw manifest;
+- final benchmark: 9 rows, 3 validated-local rows (V0/C0/C4), 6 explicit
+  unavailable rows, all mapping/empty/error counters zero for the visual
+  candidate;
+- final CLIP resource evidence: batch `4047.317 ms`, query p50 `65.218 ms`,
+  p95 `123.041 ms`, process RAM `929.168 MB` on CPU;
+- final benchmark manifest:
+  `artifacts/skillpixel-kis-benchmark/runs/2026-08-06-sota-v2/run_manifest.json`;
+- final submission:
+  `artifacts/skillpixel-kis-benchmark/runs/2026-08-06-sota-v2/submission-cli.csv`;
+  exporter and independent CSV validation both report 100 queries, exactly 100
+  answers/query, 100 unique query IDs, valid video filenames, valid source
+  frame ranges, and no internal row ID leakage.
+
+SigLIP2 and Jina CLIP v2 were attempted with local-files-only strict loading
+and remain unavailable because their weights are not cached. PaddleOCR,
+Ultralytics, and EasyOCR are absent from the project environment; no OCR/object
+artifact was supplied, so C1/C2/C3/C5 are not scored. C4 bounded rerank ran on
+the real visual candidates. There are no official SkillPixel qrels in this
+checkout, therefore the final `quality_status` is
+`UNVALIDATED_ON_SKILLPIXEL_QRELS`; Recall/MRR, SOTA, and promotion claims are
+intentionally withheld.
+
+Final verification commands:
+
+```text
+uv run pytest       -> 245 passed, 1 warning
+uv run ruff check src tests -> All checks passed
+uv run mypy src     -> Success: no issues found in 65 source files
+```
+
+Meaningful commit history on this branch:
+
+```text
+eef00d1 audit-and-baseline: freeze SkillPixel V0 raw baseline
+4d5fc9d provider-and-index: add real provider adapters and versioned artifacts
+4d79217 ocr-object-retrieval: add real channel ablation benchmark
+43f397f benchmark-and-promotion: record SkillPixel matrix and resource metrics
+a00123b kaggle-artifact-packaging: add safe SkillPixel run bundle
+```
+
+`origin` push was attempted after each milestone and rejected with GitHub 403
+because the configured identity lacks write permission to
+`hhlearntocode/SoftSignalsRetrievalSystems-AIC2025`. The same branch was pushed
+to the writable `staging` remote at
+`https://github.com/lenamkhanhh/HCMAIC-2026-system`, and the draft PR is
+`https://github.com/lenamkhanhh/HCMAIC-2026-system/pull/2` targeting
+`hcmaic-2026-foundation`. No force-push, merge, contest submission, or identity
+change was performed.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`
-Branch: `feat/skillpixel-tkis-vkis`
-HEAD sau phase P0-G: `c875d43`
+Historical pre-benchmark branch: `feat/skillpixel-tkis-vkis`
+Historical HEAD sau phase P0-G: `c875d43`; the authoritative current branch and
+HEAD are recorded in the final verification section above.
 
 ## 1. Tóm tắt kết quả
 
@@ -183,7 +250,10 @@ Kết quả trên `DataMockTest`:
 - 9.835 sampled frames được lưu và embed.
 - Sampling mặc định: dense stride 10; hỗ trợ stride 12.
 - Provider thực sự chạy: CLIP `openai/clip-vit-base-patch32`, 512 dimensions, CPU.
-- SigLIP2 `google/siglip2-base-patch16-224` được thử trước ở chế độ local-only; vì máy chưa có cache nên fallback sang CLIP thật.
+- SigLIP2 `google/siglip2-base-patch16-224` được thử ở chế độ local-only; trong
+  benchmark strict, provider được ghi `unavailable` và không fallback sang CLIP.
+  Legacy auto-provider vẫn có thể fallback sang CLIP thật, nhưng path đó không
+  được dùng để gắn nhãn SigLIP2 hay promote benchmark.
 - FAISS `IndexFlatIP` load lại thành công với `ntotal=9835`, `dimension=512`.
 - NumPy exact oracle và FAISS top-100 có kết quả khớp trong smoke test.
 - 50 TKIS queries và 50 VKIS queries đều chạy được; mỗi query có 100 answers.
@@ -510,7 +580,8 @@ uv run hcmaic build-skillpixel-index `
   --output artifacts\skillpixel-index-v1 `
   --provider siglip2 `
   --device cpu `
-  --batch-size 32
+  --batch-size 32 `
+  --strict-provider
 
 uv run hcmaic retrieve-skillpixel `
   --index artifacts\skillpixel-index-v1 `
@@ -527,13 +598,17 @@ uv run hcmaic export-skillpixel `
   --output artifacts\skillpixel-submission.csv
 ```
 
-Mặc định các command này không download model. Nếu SigLIP2 chưa có cache, provider factory sẽ báo fallback và dùng CLIP thật đã cache.
+Mặc định các command này không download model. Với benchmark strict, nếu
+SigLIP2 chưa có cache command sẽ báo `unavailable`; dùng `--provider clip` cho
+baseline CLIP rõ ràng, không gắn nhãn fallback thành SigLIP2.
 
 ## 7. Hạn chế và việc có thể làm tiếp
 
 - Hiện tại provider chạy CPU; full build embedding mất nhiều thời gian hơn GPU.
 - SigLIP2 chưa được benchmark vì chưa có local weights.
-- OCR, ASR, object detection, TRAKE, VLM và reranker chưa nằm trong P0, đúng scope ban đầu.
+- OCR/object channels hiện có contract nhưng chưa có provider/artifact thật trên
+  máy; C4 bounded rerank đã được chạy trên visual candidates. ASR, TRAKE và VLM
+  vẫn ngoài scope benchmark này.
 - P0 đang dùng uniform dense sampling stride 10; bước tiếp theo có thể benchmark stride 12, shot-boundary sampling và query-aware selection nhưng phải giữ nguyên `source_frame_idx` contract.
 
 ## 8. HCMAIC Full KIS continuation
