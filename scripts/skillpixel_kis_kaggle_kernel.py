@@ -18,6 +18,7 @@ CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
 RUN_ROOT = "/kaggle/working/skillpixel-kis-run-v1"
 MODEL_ROOT = "/kaggle/working/models/siglip2-base-patch16-224"
 KAGGLE_INPUT_ROOT = Path("/kaggle/input")
+REQUESTED_DEVICE = "cuda"
 
 
 def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -74,6 +75,42 @@ def _download_public_model() -> None:
     )
 
 
+def _device_from_probe(
+    *, cuda_available: bool, capability: tuple[int, int] | None, device_name: str | None
+) -> tuple[str, dict[str, object]]:
+    if not cuda_available:
+        return "cpu", {"reason": "cuda_unavailable"}
+    if capability is None:
+        return "cpu", {"reason": "cuda_capability_unavailable"}
+    details: dict[str, object] = {
+        "device_name": device_name,
+        "compute_capability": f"sm_{capability[0]}{capability[1]}",
+    }
+    if capability[0] < 7:
+        return "cpu", {
+            **details,
+            "reason": "torch_cuda_build_requires_sm70_or_newer",
+        }
+    return "cuda", details
+
+
+def _select_execution_device() -> tuple[str, dict[str, object]]:
+    """Use CUDA only when the installed Torch build supports the allocated GPU."""
+    try:
+        import torch
+
+        available = bool(torch.cuda.is_available())
+        capability = torch.cuda.get_device_capability(0) if available else None
+        device_name = torch.cuda.get_device_name(0) if available else None
+        return _device_from_probe(
+            cuda_available=available,
+            capability=capability,
+            device_name=device_name,
+        )
+    except Exception as exc:  # pragma: no cover - depends on Kaggle hardware
+        return "cpu", {"reason": f"cuda_preflight_failed:{type(exc).__name__}"}
+
+
 def main() -> int:
     _ensure_dependency("yaml", "pyyaml>=6.0,<7")
     _ensure_dependency("transformers", "transformers>=4.44,<5")
@@ -87,6 +124,16 @@ def main() -> int:
         item for item in (source_path, env.get("PYTHONPATH", "")) if item
     )
     _download_public_model()
+    execution_device, device_details = _select_execution_device()
+    print(
+        json.dumps(
+            {
+                "requested_device": REQUESTED_DEVICE,
+                "selected_device": execution_device,
+                "device_details": device_details,
+            }
+        )
+    )
     resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4", return_parent=True)
     resolved_questions = _resolve_input_path(QUESTIONS, suffix="questions.csv")
     resolved_corpus = _resolve_input_path(CORPUS, suffix="corpus.csv")
@@ -97,7 +144,7 @@ def main() -> int:
             "SKILLPIXEL_CORPUS": resolved_corpus,
             "SKILLPIXEL_RUN_ROOT": RUN_ROOT,
             "SKILLPIXEL_SIGLIP2_MODEL": MODEL_ROOT,
-            "SKILLPIXEL_DEVICE": "cuda",
+            "SKILLPIXEL_DEVICE": execution_device,
             "SKILLPIXEL_LOCAL_FILES_ONLY": "true",
         }
     )
@@ -163,6 +210,9 @@ def main() -> int:
         "corpus": resolved_corpus,
         "run_root": RUN_ROOT,
         "model_id": "google/siglip2-base-patch16-224",
+        "requested_device": REQUESTED_DEVICE,
+        "selected_device": execution_device,
+        "device_details": device_details,
         "training_status": "not_run",
         "raw_video_source": True,
         "btc_artifacts_used": False,

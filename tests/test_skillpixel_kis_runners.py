@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.skillpixel_kis_build import load_skillpixel_config, provider_model_kwargs
-from scripts.skillpixel_kis_kaggle_kernel import _resolve_input_path
+from scripts.skillpixel_kis_kaggle_kernel import _device_from_probe, _resolve_input_path
 
 
 def test_runner_config_expands_environment_variables(tmp_path: Path, monkeypatch):
@@ -67,3 +67,25 @@ def test_kaggle_runner_resolves_query_file_not_parent(tmp_path: Path, monkeypatc
     assert _resolve_input_path(
         "/kaggle/input/skillpixel-query/questions.csv", suffix="questions.csv"
     ) == str(questions)
+
+
+def test_kaggle_runner_records_cpu_fallback_for_unsupported_gpu():
+    device, details = _device_from_probe(
+        cuda_available=True,
+        capability=(6, 0),
+        device_name="Tesla P100-PCIE-16GB",
+    )
+
+    assert device == "cpu"
+    assert details["reason"] == "torch_cuda_build_requires_sm70_or_newer"
+
+
+def test_kaggle_runner_keeps_cuda_for_supported_gpu():
+    device, details = _device_from_probe(
+        cuda_available=True,
+        capability=(7, 5),
+        device_name="Tesla T4",
+    )
+
+    assert device == "cuda"
+    assert details["compute_capability"] == "sm_75"
