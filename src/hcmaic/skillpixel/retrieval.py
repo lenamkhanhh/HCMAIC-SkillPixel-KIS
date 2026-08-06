@@ -23,6 +23,21 @@ class SkillPixelQuestion:
     query_image: str
 
 
+def _provider_identity(info: dict[str, Any]) -> tuple[str, str, str]:
+    """Compare provider family/model/revision without treating local paths as identity."""
+    version = str(info.get("version", ""))
+    provider = str(info.get("provider", version.split(":", 1)[0]))
+    model_name = str(info.get("model_name", "")).replace("\\", "/")
+    model_id = model_name.rsplit("/", 1)[-1] if model_name else ""
+    revision = str(info.get("model_revision", info.get("revision", "")))
+    if not revision and "@" in version:
+        revision = version.rsplit("@", 1)[1]
+    if not model_id:
+        version_body = version.split(":", 1)[-1]
+        model_id = version_body.rsplit("@", 1)[0]
+    return provider, model_id, revision
+
+
 @dataclass(frozen=True)
 class SkillPixelHit:
     query_id: str
@@ -101,8 +116,9 @@ class SkillPixelRetriever:
             raise ValueError(
                 f"provider dimension {provider.dimension} != index dimension {index.dimension}"
             )
+        actual = provider.info()
         expected_version = str(expected.get("version", ""))
-        if expected_version and provider.version != expected_version:
+        if expected_version and _provider_identity(actual) != _provider_identity(expected):
             raise ValueError(
                 f"provider version {provider.version!r} != index version {expected_version!r}"
             )

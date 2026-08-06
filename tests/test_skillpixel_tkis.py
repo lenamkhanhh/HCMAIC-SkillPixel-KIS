@@ -43,6 +43,24 @@ class _TextSpyProvider(EmbeddingProvider):
         )
 
 
+class _PathVersionProvider(_TextSpyProvider):
+    name = "siglip2"
+
+    def __init__(self, model_name: str) -> None:
+        super().__init__()
+        self.model_name = model_name
+        self.version = f"siglip2:{model_name}@main"
+
+    def info(self) -> dict[str, object]:
+        return {
+            "provider": self.name,
+            "version": self.version,
+            "model_name": self.model_name,
+            "model_revision": "main",
+            "dimension": self.dimension,
+        }
+
+
 def _make_video(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 2.0, (64, 48))
@@ -101,3 +119,22 @@ def test_tkis_rejects_provider_version_mismatch(retriever: SkillPixelRetriever):
         SkillPixelRetriever.from_artifacts(
             retriever.index.artifact_dir, provider=mismatched
         )
+
+
+def test_tkis_accepts_same_model_revision_from_different_local_path(tmp_path: Path):
+    source = _make_video(tmp_path / "raw" / "demo.avi")
+    raw_root = tmp_path / "generated"
+    ingest_raw_videos(source.parent, raw_root, stride_frames=2)
+    artifacts = tmp_path / "artifacts"
+    build_skillpixel_index(
+        raw_root,
+        artifacts,
+        _PathVersionProvider("/kaggle/working/models/siglip2-base-patch16-224"),
+    )
+
+    retriever = SkillPixelRetriever.from_artifacts(
+        artifacts,
+        provider=_PathVersionProvider(r"D:\Models\siglip2-base-patch16-224"),
+    )
+
+    assert retriever.provider.name == "siglip2"
