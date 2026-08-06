@@ -51,6 +51,19 @@ FAISS. Without official qrels, reports retain UNVALIDATED_ON_HCMAIC.
 
 ### Verification
 
+## Latest SkillPixel KIS status (2026-08-06)
+
+The current raw-video-first TKIS/VKIS report is
+[docs/HCMAIC_SKILLPIXEL_KIS_FINAL_REPORT.md](docs/HCMAIC_SKILLPIXEL_KIS_FINAL_REPORT.md).
+The verified run uses real local SigLIP2 (768D), normalized exact FAISS
+`IndexFlatIP`, 250 raw videos, 9,835 sampled frames and 100 queries. The final
+submission and evidence validate successfully. OCR, object, ASR and Jina are
+implemented as explicit real-provider paths; unavailable weights or GPU jobs
+are recorded as unavailable and never silently replaced by mock scores.
+
+No official HCMAIC qrels are present, so the quality status remains
+`UNVALIDATED_ON_HCMAIC` and no SOTA claim is made.
+
     uv run pytest
     uv run ruff check src tests scripts
     uv run mypy src
