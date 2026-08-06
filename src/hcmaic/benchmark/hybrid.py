@@ -17,7 +17,7 @@ from hcmaic.benchmark.skillpixel import (
     _mapping_validation,
     _model_registry_entry,
     _rss_mb,
-    _write_checksums,
+    _sha256_file,
     _write_evidence_csv,
     _write_jsonl,
 )
@@ -30,6 +30,18 @@ from hcmaic.skillpixel.submission import (
 )
 
 QUALITY_STATUS = "UNVALIDATED_ON_HCMAIC"
+
+
+def _write_hybrid_checksums(output_dir: Path) -> Path:
+    """Hash only output contracts; raw/index artifacts have their own manifests."""
+    checksum_path = Path(output_dir) / "checksums.sha256"
+    lines = []
+    for path in sorted(Path(output_dir).iterdir()):
+        if not path.is_file() or path == checksum_path:
+            continue
+        lines.append(f"{_sha256_file(path)}  {path.name}")
+    checksum_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return checksum_path
 
 
 def _resolve_query_image(query_image: str, query_root: Path) -> Path:
@@ -320,7 +332,7 @@ def benchmark_runtime_candidate(
         json.dumps(resources, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    checksums_path = _write_checksums(candidate_dir)
+    checksums_path = _write_hybrid_checksums(candidate_dir)
     executed_channels = sorted(
         {channel for output in outputs.values() for channel in output.executed_channels}
     )
