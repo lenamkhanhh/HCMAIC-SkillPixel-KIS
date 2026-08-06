@@ -96,8 +96,33 @@ def _cmd_ingest_raw(args: argparse.Namespace) -> int:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     from hcmaic.ingestion.validator import validate_dataset, write_validation_report
+    from hcmaic.ingestion.video import SUPPORTED_EXTENSIONS
 
     root = Path(args.input)
+    raw_source = root.is_file() and root.suffix.lower() in SUPPORTED_EXTENSIONS
+    if root.is_dir():
+        raw_source = any(
+            path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            for path in root.iterdir()
+        ) and not (root / "dataset_manifest.json").is_file()
+    if raw_source:
+        from hcmaic.skillpixel.raw import validate_raw_video_source
+
+        source_report = validate_raw_video_source(root)
+        out = Path(args.report) if args.report else root / "data-validation.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(source_report.to_dict(), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(
+            f"Validated raw source {root}: {source_report.n_videos} videos, "
+            f"{len(source_report.errors)} error(s), {len(source_report.warnings)} warning(s)."
+        )
+        for error in source_report.errors[: args.max_warnings]:
+            print(f"  ERROR {error}")
+        print(f"Report: {out}")
+        return 0 if source_report.ok else 1
     if not root.is_dir():
         print(f"error: dataset root {root} is not a directory", file=sys.stderr)
         return 2
@@ -148,6 +173,8 @@ def _cmd_build_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_skillpixel_index(args: argparse.Namespace) -> int:
+    import json
+
     from hcmaic.embedding.factory import get_real_visual_provider
     from hcmaic.skillpixel.index import build_skillpixel_index
 
@@ -157,8 +184,22 @@ def _cmd_build_skillpixel_index(args: argparse.Namespace) -> int:
             device=args.device,
             local_files_only=not args.allow_network,
             batch_size=args.batch_size,
+            allow_fallback=not args.strict_provider,
         )
         index = build_skillpixel_index(Path(args.input), Path(args.output), provider)
+        provider_report_path = Path(args.output) / "provider_report.json"
+        provider_report = json.loads(provider_report_path.read_text(encoding="utf-8"))
+        provider_report.update(
+            {
+                "requested_provider": args.provider,
+                "selection": selection,
+                "fallback": selection.get("fallback"),
+            }
+        )
+        provider_report_path.write_text(
+            json.dumps(provider_report, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     except (RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -187,7 +228,7 @@ def _cmd_retrieve_skillpixel(args: argparse.Namespace) -> int:
     index = load_skillpixel_index(Path(args.index))
     expected_provider = str(index.provider_info.get("provider", ""))
     prefer = expected_provider if args.provider == "auto" else args.provider
-    if prefer not in {"siglip2", "clip"}:
+    if prefer not in {"siglip2", "clip", "jina-clip-v2"}:
         print(f"error: unsupported index provider {expected_provider!r}", file=sys.stderr)
         return 2
     try:
@@ -197,6 +238,7 @@ def _cmd_retrieve_skillpixel(args: argparse.Namespace) -> int:
             local_files_only=not args.allow_network,
             revision=args.revision or index.provider_info.get("model_revision"),
             batch_size=args.batch_size,
+            allow_fallback=not args.strict_provider,
         )
         retriever = SkillPixelRetriever(index, provider)
         questions_path = Path(args.questions)
@@ -631,7 +673,9 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
 
 def _add_kis_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--index", required=True)
-    parser.add_argument("--provider", choices=["auto", "siglip2", "clip"], default="auto")
+    parser.add_argument(
+        "--provider", choices=["auto", "siglip2", "clip", "jina-clip-v2"], default="auto"
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--allow-network", action="store_true")
@@ -708,13 +752,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--input", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--provider", choices=["siglip2", "clip"], default="siglip2")
+    p.add_argument(
+        "--provider", choices=["siglip2", "clip", "jina-clip-v2"], default="siglip2"
+    )
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument(
         "--allow-network",
         action="store_true",
         help="Permit model fetches; default is local-files-only",
+    )
+    p.add_argument(
+        "--strict-provider",
+        action="store_true",
+        help="Fail if the requested provider is unavailable; never use a fallback",
     )
     p.set_defaults(func=_cmd_build_skillpixel_index)
 
@@ -725,12 +776,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--index", required=True)
     p.add_argument("--questions", required=True)
     p.add_argument("--results", required=True)
-    p.add_argument("--provider", choices=["auto", "siglip2", "clip"], default="auto")
+    p.add_argument(
+        "--provider",
+        choices=["auto", "siglip2", "clip", "jina-clip-v2"],
+        default="auto",
+    )
     p.add_argument("--top-k", type=int, default=100)
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--revision")
     p.add_argument("--allow-network", action="store_true")
+    p.add_argument(
+        "--strict-provider",
+        action="store_true",
+        help="Fail if the requested provider is unavailable; never use a fallback",
+    )
     p.set_defaults(func=_cmd_retrieve_skillpixel)
 
     p = sub.add_parser(

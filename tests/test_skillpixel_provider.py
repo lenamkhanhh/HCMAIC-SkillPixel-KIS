@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from hcmaic.embedding.base import EmbeddingProvider, l2_normalize
 from hcmaic.embedding.factory import get_real_visual_provider
@@ -80,3 +81,54 @@ def test_real_factory_falls_back_to_real_clip_with_evidence(monkeypatch):
     assert report["provider"] == "clip"
     assert report["fallback"]["provider"] == "siglip2"
     assert "cache unavailable" in report["fallback"]["error"]
+
+
+def test_real_factory_supports_jina_without_silent_clip_fallback(monkeypatch):
+    import hcmaic.embedding.factory as factory
+
+    calls: list[str] = []
+
+    class _FakeJina(_RecordingProvider):
+        name = "jina-clip-v2"
+        version = "jina-clip-v2:test"
+
+        def __init__(self, **kwargs):
+            calls.append("jina")
+            assert kwargs["local_files_only"] is True
+
+    class _UnexpectedClip(_RecordingProvider):
+        def __init__(self, **kwargs):
+            calls.append("clip")
+            raise AssertionError("Jina must not silently fall back to CLIP")
+
+    monkeypatch.setattr(factory, "RealJinaClipV2EmbeddingProvider", _FakeJina)
+    monkeypatch.setattr(factory, "RealClipEmbeddingProvider", _UnexpectedClip)
+
+    provider, report = factory.get_real_visual_provider(
+        prefer="jina-clip-v2", local_files_only=True
+    )
+
+    assert provider.name == "jina-clip-v2"
+    assert report["provider"] == "jina-clip-v2"
+    assert report["fallback"] is None
+    assert calls == ["jina"]
+
+
+def test_real_factory_strict_siglip_does_not_fallback(monkeypatch):
+    import hcmaic.embedding.factory as factory
+
+    class _UnavailableSigLIP:
+        def __init__(self, **kwargs):
+            raise RuntimeError("siglip2 cache unavailable")
+
+    class _UnexpectedCLIP(_RecordingProvider):
+        def __init__(self, **kwargs):
+            raise AssertionError("strict provider must not construct CLIP")
+
+    monkeypatch.setattr(factory, "RealSiglip2EmbeddingProvider", _UnavailableSigLIP)
+    monkeypatch.setattr(factory, "RealClipEmbeddingProvider", _UnexpectedCLIP)
+
+    with pytest.raises(RuntimeError, match="siglip2 cache unavailable"):
+        factory.get_real_visual_provider(
+            prefer="siglip2", local_files_only=True, allow_fallback=False
+        )

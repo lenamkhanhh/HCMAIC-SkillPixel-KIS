@@ -76,6 +76,7 @@ def test_build_and_reload_faiss_artifacts_round_trip(raw_dataset: Path, tmp_path
         "index.faiss",
         "dataset_manifest.json",
         "index_manifest.json",
+        "provider_report.json",
     ):
         assert (artifact_dir / name).is_file(), name
 
@@ -84,6 +85,18 @@ def test_build_and_reload_faiss_artifacts_round_trip(raw_dataset: Path, tmp_path
     assert loaded.faiss_index.ntotal == 4
     assert loaded.faiss_index.d == 4
     assert all(np.isclose(np.linalg.norm(row), 1.0) for row in loaded.embeddings)
+
+    manifest = json.loads((artifact_dir / "index_manifest.json").read_text(encoding="utf-8"))
+    provider_report = json.loads(
+        (artifact_dir / "provider_report.json").read_text(encoding="utf-8")
+    )
+    assert manifest["dataset_id"] == "skillpixel-local"
+    assert manifest["provider_id"] == "test-real-shape"
+    assert manifest["embedding_dimension"] == 4
+    assert manifest["index_type"] == "IndexFlatIP"
+    assert manifest["n_vectors"] == 4
+    assert manifest["mapping_sha256"]
+    assert provider_report["provider"]["provider"] == "test-real-shape"
 
     id_map = json.loads((artifact_dir / "id_map.json").read_text(encoding="utf-8"))
     assert [item["faiss_row"] for item in id_map] == [0, 1, 2, 3]

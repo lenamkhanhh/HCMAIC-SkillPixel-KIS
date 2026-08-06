@@ -22,6 +22,7 @@ EMBEDDINGS_NAME = "embeddings.npy"
 ID_MAP_NAME = "id_map.json"
 FAISS_NAME = "index.faiss"
 INDEX_MANIFEST_NAME = "index_manifest.json"
+PROVIDER_REPORT_NAME = "provider_report.json"
 INDEX_FORMAT = "skillpixel-index-v1"
 
 
@@ -279,6 +280,21 @@ def build_skillpixel_index(
         "index_parameters": {"metric": "inner_product", "exact": True},
         "n_frames": len(catalog),
         "dimension": provider.dimension,
+        "dataset_id": str(dataset_manifest.get("dataset_id", "skillpixel-local")),
+        "dataset_hash": dataset_manifest["dataset_hash"],
+        "provider_id": provider.name,
+        "model_revision": provider_info.get("model_revision", provider.version),
+        "embedding_dimension": provider.dimension,
+        "dtype": str(embeddings.dtype),
+        "normalized": True,
+        "preprocessing": provider_info.get(
+            "preprocess_hash", provider_info.get("preprocessing")
+        ),
+        "index_type": "IndexFlatIP",
+        "n_vectors": len(catalog),
+        "mapping_sha256": id_map_hash,
+        "code_sha": _code_version(),
+        "fallback": None,
         "normalization": "l2",
         "raw_video_source": True,
         "btc_artifacts_used": False,
@@ -287,6 +303,21 @@ def build_skillpixel_index(
         "created_at": dt.datetime.now(dt.UTC).isoformat(),
     }
     _write_json(artifact_dir / INDEX_MANIFEST_NAME, index_manifest)
+    _write_json(
+        artifact_dir / PROVIDER_REPORT_NAME,
+        {
+            "format": "hcmaic-provider-report-v1",
+            "provider": provider_info,
+            "provider_execution": "validated-local",
+            "fallback": None,
+            "raw_video_source": True,
+            "btc_artifacts_used": False,
+            "dataset_hash": dataset_manifest["dataset_hash"],
+            "embedding_dimension": provider.dimension,
+            "code_sha": index_manifest["code_sha"],
+            "evidence_level": provider_info.get("evidence_level", "VALIDATED_LOCAL"),
+        },
+    )
     loaded = load_skillpixel_index(artifact_dir)
     if loaded.faiss_index.ntotal != len(catalog):
         raise SkillPixelIndexError("FAISS index row count mismatch immediately after build")
@@ -303,6 +334,7 @@ def load_skillpixel_index(artifact_dir: Path) -> SkillPixelIndex:
         FAISS_NAME,
         "dataset_manifest.json",
         INDEX_MANIFEST_NAME,
+        PROVIDER_REPORT_NAME,
     )
     missing = [name for name in required if not (artifact_dir / name).is_file()]
     if missing:
@@ -319,6 +351,9 @@ def load_skillpixel_index(artifact_dir: Path) -> SkillPixelIndex:
         )
         index_manifest = json.loads(
             (artifact_dir / INDEX_MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        provider_report = json.loads(
+            (artifact_dir / PROVIDER_REPORT_NAME).read_text(encoding="utf-8")
         )
         faiss_index = faiss.read_index(str(artifact_dir / FAISS_NAME))
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -338,6 +373,14 @@ def load_skillpixel_index(artifact_dir: Path) -> SkillPixelIndex:
         raise SkillPixelIndexError("index provider execution is not validated-local")
     if str(index_manifest.get("embedding", {}).get("provider", "")).lower() == "mock":
         raise SkillPixelIndexError("mock provider is not allowed in a production SkillPixel index")
+    if provider_report.get("provider_execution") != "validated-local":
+        raise SkillPixelIndexError("provider report execution is not validated-local")
+    if provider_report.get("dataset_hash") != dataset_manifest.get("dataset_hash"):
+        raise SkillPixelIndexError("provider report dataset hash mismatch")
+    if provider_report.get("provider", {}).get("provider") != index_manifest.get(
+        "provider_id"
+    ):
+        raise SkillPixelIndexError("provider report/provider id mismatch")
     if embeddings.ndim != 2 or len(catalog) != len(id_map) != embeddings.shape[0]:
         raise SkillPixelIndexError(
             f"row count mismatch catalog={len(catalog)} id_map={len(id_map)} "

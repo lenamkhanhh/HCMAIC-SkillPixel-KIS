@@ -38,6 +38,32 @@ frame_uid -> video_id -> video_filename/source_frame_idx` mappings round-tripped
 and strict CSV validation passed with no `faiss_row` leakage. Generated artifacts
 are under `system/artifacts/skillpixel-kis-benchmark/` and are not committed.
 
+## Provider and index hardening milestone
+
+The benchmark branch now has a concrete Jina CLIP v2 adapter using the model's
+native `encode_image`/`encode_text` interface, plus an explicit strict-provider
+flag. A requested SigLIP2 or Jina provider cannot silently produce a CLIP
+benchmark row; unavailable candidates are recorded as unavailable/fallback with
+the original error.
+
+The raw/index artifact contract was extended with:
+
+- raw `catalog.jsonl` beside source mappings;
+- `provider_report.json` with requested provider, selected provider, revision,
+  fallback, execution evidence and dataset hash;
+- top-level `dataset_id`, `dataset_hash`, `provider_id`, `model_revision`,
+  `embedding_dimension`, `dtype`, `normalized`, `index_type`, `n_vectors`,
+  `mapping_sha256`, `code_sha`, and `fallback` fields in `index_manifest.json`.
+
+Runtime evidence on this machine:
+
+- CLIP loaded from local cache and rebuilt as `.../runs/2026-08-06-baseline-v1/visual/clip-v0`.
+- Strict SigLIP2 attempt: unavailable because
+  `google/siglip2-base-patch16-224` is not cached; no fallback index was written.
+- Strict Jina CLIP v2 attempt: unavailable because `jinaai/jina-clip-v2` is not
+  cached; no fallback index was written.
+- No network download or Kaggle credential was used.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`
