@@ -1,5 +1,43 @@
 # SkillPixel TKIS/VKIS Implementation Report
 
+## Benchmark audit snapshot (2026-08-06)
+
+This benchmark work is isolated on branch
+`codex/feat/skillpixel-kis-sota-benchmark`, created from the current KIS
+implementation HEAD. Existing untracked documentation was preserved and is not
+part of this branch's staged scope.
+
+Audit evidence:
+
+- `videos/`: 250 raw MP4 files; `questions.csv`: 100 queries (50 TKIS, 50 VKIS);
+  `corpus.csv`: 250 rows with `video`, `path`, `duration_seconds`, `fps`,
+  `frame_count`, `width`, and `height`.
+- The initial handoff command `validate-data --input <raw-video-root>` exposed a
+  real execution gap (`mapping-columns`), because the validator only understood
+  generated keyframe datasets. The raw-source validator now probes metadata and
+  hashes all source files, and the same command returns `250 videos, 0 errors`.
+- Baseline test freeze before changes: `uv run pytest` -> `235 passed, 1 warning`.
+- Provider doctor is dependency/interface evidence only; it does not claim model
+  weights are cached. CLIP, SigLIP2, and Jina CLIP v2 were checked explicitly.
+
+V0 baseline evidence:
+
+```text
+raw ingestion: 250 videos, 97,236 source frames, 9,835 sampled frames
+sampling: uniform_stride_10_v1, max_nearest_frame_error=9
+dataset_hash: 66b95d050f24287de9f107ad6810ac75b28f717f3e717a64868d30f88f977bba
+provider: real local CLIP openai/clip-vit-base-patch32, 512D, CPU
+index: normalized float32 exact FAISS IndexFlatIP
+retrieval: 100 queries, top_k=100
+submission: valid=true, 100 queries, 100 answers/query
+```
+
+Independent V0 checks accepted: FAISS `ntotal=9835`, dimension `512`, NumPy
+oracle and FAISS top-100 row order matched, all `faiss_row -> feature_row ->
+frame_uid -> video_id -> video_filename/source_frame_idx` mappings round-tripped,
+and strict CSV validation passed with no `faiss_row` leakage. Generated artifacts
+are under `system/artifacts/skillpixel-kis-benchmark/` and are not committed.
+
 Ngày cập nhật: 2026-08-06
 Repository: `D:\Code\Code\AIO\Code\HCMAIC`
 Working directory Git: `D:\Code\Code\AIO\Code\HCMAIC\system`

@@ -82,6 +82,34 @@ class RawDatasetStats:
 
 
 @dataclass(frozen=True)
+class RawSourceValidationReport:
+    """Read-only validation report for a raw-video source directory."""
+
+    input_path: Path
+    videos: tuple[dict[str, Any], ...]
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def n_videos(self) -> int:
+        return len(self.videos)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and bool(self.videos)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input_path": str(self.input_path),
+            "n_videos": self.n_videos,
+            "videos": [dict(item) for item in self.videos],
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+            "valid": self.ok,
+        }
+
+
+@dataclass(frozen=True)
 class RawCoverageReport:
     """Coverage/density evidence for one generated raw-video dataset."""
 
@@ -137,6 +165,42 @@ def _video_id(path: Path) -> str:
     if not cleaned:
         raise RawIngestError(f"Cannot derive a video_id from raw video {path.name!r}")
     return cleaned
+
+
+def validate_raw_video_source(input_path: Path) -> RawSourceValidationReport:
+    """Probe and hash raw videos before any generated artifact is consumed."""
+    input_path = Path(input_path)
+    errors: list[str] = []
+    videos: list[dict[str, Any]] = []
+    try:
+        sources = _video_files(input_path)
+    except RawIngestError as exc:
+        return RawSourceValidationReport(input_path.resolve(), (), (str(exc),))
+
+    seen_ids: set[str] = set()
+    for source in sources:
+        try:
+            video_id = _video_id(source)
+            if video_id in seen_ids:
+                errors.append(f"duplicate video_id {video_id!r} from {source.name!r}")
+                continue
+            seen_ids.add(video_id)
+            width, height, fps, frame_count = _probe(source)
+            videos.append(
+                {
+                    "video_id": video_id,
+                    "video_filename": source.name,
+                    "source_path": str(source.resolve()),
+                    "sha256": _sha256(source),
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                    "frame_count": frame_count,
+                }
+            )
+        except (OSError, RawIngestError, ValueError) as exc:
+            errors.append(f"{source.name}: {exc}")
+    return RawSourceValidationReport(input_path.resolve(), tuple(videos), tuple(errors))
 
 
 def _probe(path: Path) -> tuple[int, int, float, int]:
@@ -349,9 +413,16 @@ def _generated_file_hashes(root: Path) -> dict[str, str]:
         for path in root.rglob("*")
         if path.is_file()
         and path.name != RAW_MANIFEST_NAME
-        and path.suffix.lower() in {".csv", ".json", ".jpg", ".jpeg", ".png"}
+        and path.suffix.lower() in {".csv", ".json", ".jsonl", ".jpg", ".jpeg", ".png"}
     )
     return {path.relative_to(root).as_posix(): _sha256(path) for path in paths}
+
+
+def _write_raw_catalog(root: Path) -> None:
+    """Persist the canonical catalog beside raw mappings for audit/package use."""
+    from hcmaic.ingestion.catalog import build_catalog, write_catalog
+
+    write_catalog(build_catalog(root), root / "catalog.jsonl")
 
 
 def _write_manifest(root: Path, videos: list[RawVideoInfo], stride_frames: int) -> None:
@@ -444,6 +515,9 @@ def ingest_raw_videos(
                     )
                     for item in manifest["raw_videos"]
                 )
+                if not (output_root / "catalog.jsonl").is_file():
+                    _write_raw_catalog(output_root)
+                    _write_manifest(output_root, list(cached_infos), stride_frames)
                 return RawIngestReport(
                     cached_infos,
                     str(manifest.get("sampling_policy", f"uniform_stride_{stride_frames}_v1")),
@@ -471,8 +545,9 @@ def ingest_raw_videos(
             (output_root / "media-info" / f"{video_id}.json").unlink(missing_ok=True)
         infos.append(_extract_one(source, output_root, stride_frames))
     _write_manifest(output_root, infos, stride_frames)
+    _write_raw_catalog(output_root)
     _write_coverage_report(output_root)
-    # Include the coverage artifact in the manifest's generated-file hashes.
+    # Include catalog and coverage artifacts in the final manifest hashes.
     _write_manifest(output_root, infos, stride_frames)
     return RawIngestReport(
         tuple(infos),

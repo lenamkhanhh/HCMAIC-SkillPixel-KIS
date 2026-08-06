@@ -15,6 +15,7 @@ from hcmaic.skillpixel.raw import (
     coverage_report,
     ingest_raw_videos,
     validate_raw_dataset,
+    validate_raw_video_source,
 )
 
 
@@ -66,6 +67,7 @@ def test_raw_ingestion_preserves_source_frame_indices_and_manifest(tmp_path: Pat
     assert manifest["sampling_policy"] == "uniform_stride_2_v1"
     assert manifest["raw_videos"][0]["sha256"]
     assert manifest["raw_videos"][0]["source_path"] == str(source.resolve())
+    assert (output / "catalog.jsonl").is_file()
     assert validate_raw_dataset(output).n_frames == 4
 
 
@@ -122,3 +124,23 @@ def test_coverage_report_exposes_nearest_frame_error(tmp_path: Path):
     assert report.max_nearest_frame_error == 1
     assert report.per_video[0]["max_gap_frames"] == 2
     assert persisted["max_nearest_frame_error"] == 1
+
+
+def test_validate_raw_video_source_reports_probe_and_hash(tmp_path: Path):
+    source = _write_video(tmp_path / "raw" / "demo.mp4", frame_count=6)
+
+    report = validate_raw_video_source(source.parent)
+
+    assert report.ok
+    assert report.n_videos == 1
+    assert report.videos[0]["video_id"] == "demo"
+    assert report.videos[0]["frame_count"] == 6
+    assert len(report.videos[0]["sha256"]) == 64
+
+
+def test_validate_raw_video_source_fails_closed_for_empty_input(tmp_path: Path):
+    report = validate_raw_video_source(tmp_path / "missing")
+
+    assert not report.ok
+    assert report.n_videos == 0
+    assert report.errors
