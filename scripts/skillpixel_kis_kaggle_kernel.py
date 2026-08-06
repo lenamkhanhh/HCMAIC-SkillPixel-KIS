@@ -18,7 +18,10 @@ QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
 CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
 RUN_ROOT = "/kaggle/working/skillpixel-kis-run-v1"
 MODEL_ROOT = "/kaggle/working/models/siglip2-base-patch16-224"
-INDEX_INPUT = "/kaggle/input/skillpixel-kis-siglip2-index-v8-20260806/visual/V1"
+# The Kaggle job rebuilds the visual index from raw videos.  An index input is
+# intentionally not mounted so a stale or teammate-produced artifact cannot
+# replace the raw-video source of truth.
+INDEX_INPUT = ""
 KAGGLE_INPUT_ROOT = Path("/kaggle/input")
 REQUESTED_DEVICE = "cuda"
 
@@ -94,6 +97,8 @@ def _resolve_input_path(
 
 
 def _resolve_optional_index_input() -> str | None:
+    if not INDEX_INPUT:
+        return None
     try:
         return _resolve_input_path(INDEX_INPUT, suffix="index.faiss", return_parent=True)
     except FileNotFoundError:
