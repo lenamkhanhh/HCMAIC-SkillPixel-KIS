@@ -14,6 +14,7 @@ from pathlib import Path
 SOURCE_DATASET = "khanhss/hcmaic-skillpixel-kis-source-20260806"
 SOURCE_INPUT = "/kaggle/input/hcmaic-skillpixel-kis-source-20260806"
 RAW_INPUT = "/kaggle/input/kis-skillpixel/videos"
+RAW_DATASET = "trieu241007/kis-skillpixel"
 QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
 CORPUS = "/kaggle/input/skillpixel-kis-query-input-20260806/corpus.csv"
 RUN_ROOT = "/kaggle/working/skillpixel-kis-run-v1"
@@ -29,6 +30,53 @@ REQUESTED_DEVICE = "cuda"
 def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print(json.dumps({"command": command[:3] + (["..."] if len(command) > 3 else [])}))
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def _ocr_only_command_sequence(
+    *, python: str, config: str, allow_model_download: bool
+) -> list[list[str]]:
+    """Return the minimal raw-catalog -> real-OCR Kaggle execution path."""
+    build = [python, "scripts/skillpixel_kis_build.py", "--config", config]
+    allow_download = ["--allow-model-download"] if allow_model_download else []
+    return [
+        [*build, "--stage", "catalog"],
+        [*build, "--stage", "ocr", *allow_download],
+    ]
+
+
+def _assert_cuda_for_ocr(
+    selected_device: str, device_details: dict[str, object]
+) -> None:
+    if selected_device != "cuda":
+        raise RuntimeError(
+            "OCR-only Kaggle job requires CUDA; "
+            f"selected_device={selected_device}, details={device_details}"
+        )
+
+
+def _ensure_paddle_for_ocr(*, require_cuda: bool) -> None:
+    """Install/check the real Paddle runtime without allowing a GPU downgrade."""
+    if not require_cuda:
+        _ensure_dependency("paddle", "paddlepaddle>=3.0")
+        return
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--upgrade",
+            "paddlepaddle-gpu>=3.0",
+        ]
+    )
+    importlib.invalidate_caches()
+    try:
+        import paddle  # type: ignore[import-not-found,import-untyped]
+    except ImportError as exc:  # pragma: no cover - Kaggle runtime dependent
+        raise RuntimeError("paddlepaddle-gpu installation did not provide paddle") from exc
+    if not bool(paddle.is_compiled_with_cuda()):
+        raise RuntimeError("paddle runtime is not CUDA-enabled; refusing CPU OCR fallback")
 
 
 def _ensure_dependency(module: str, package: str) -> None:
@@ -216,19 +264,23 @@ def _select_execution_device() -> tuple[str, dict[str, object]]:
 
 
 def main() -> int:
+    ocr_only = _env_flag("SKILLPIXEL_OCR_ONLY", default=False)
     _ensure_dependency("yaml", "pyyaml>=6.0,<7")
-    _ensure_dependency("transformers", "transformers>=4.44,<5")
-    _ensure_dependency("faiss", "faiss-cpu>=1.8")
     _ensure_dependency("cv2", "opencv-python-headless>=4.9")
-    _ensure_dependency("huggingface_hub", "huggingface_hub>=0.24")
+    if not ocr_only:
+        _ensure_dependency("transformers", "transformers>=4.44,<5")
+        _ensure_dependency("faiss", "faiss-cpu>=1.8")
+        _ensure_dependency("huggingface_hub", "huggingface_hub>=0.24")
     run_ocr = _env_flag("SKILLPIXEL_RUN_OCR", default=True)
     run_object = _env_flag("SKILLPIXEL_RUN_OBJECT", default=True)
     run_asr = _env_flag("SKILLPIXEL_RUN_ASR", default=False)
     run_reranker = _env_flag("SKILLPIXEL_RUN_RERANKER", default=False)
     run_jina = _env_flag("SKILLPIXEL_RUN_JINA", default=False)
     allow_optional_download = _env_flag("SKILLPIXEL_ALLOW_MODEL_DOWNLOAD", default=True)
+    if ocr_only and not run_ocr:
+        raise ValueError("SKILLPIXEL_OCR_ONLY requires SKILLPIXEL_RUN_OCR=true")
     if run_ocr:
-        _ensure_dependency("paddle", "paddlepaddle>=3.0")
+        _ensure_paddle_for_ocr(require_cuda=ocr_only)
         _ensure_dependency("paddleocr", "paddleocr>=3.0")
     if run_object:
         _ensure_dependency("ultralytics", "ultralytics>=8.3")
@@ -242,7 +294,8 @@ def main() -> int:
     env["PYTHONPATH"] = os.pathsep.join(
         item for item in (source_path, env.get("PYTHONPATH", "")) if item
     )
-    _download_public_model()
+    if not ocr_only:
+        _download_public_model()
     execution_device, device_details = _select_execution_device()
     print(
         json.dumps(
@@ -253,6 +306,63 @@ def main() -> int:
             }
         )
     )
+    if ocr_only:
+        _assert_cuda_for_ocr(execution_device, device_details)
+        resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4", return_parent=True)
+        env.update(
+            {
+                "SKILLPIXEL_RAW_INPUT": resolved_raw_input,
+                "SKILLPIXEL_RUN_ROOT": RUN_ROOT,
+                "SKILLPIXEL_DEVICE": execution_device,
+                "SKILLPIXEL_OCR_MODEL_VERSION": "PP-OCRv6",
+                "SKILLPIXEL_ALLOW_MODEL_DOWNLOAD": (
+                    "true" if allow_optional_download else "false"
+                ),
+                "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK": "True",
+            }
+        )
+        config = repository / "configs" / "skillpixel_kis.yaml"
+        for command in _ocr_only_command_sequence(
+            python=sys.executable,
+            config=str(config),
+            allow_model_download=allow_optional_download,
+        ):
+            _run(command, cwd=repository, env=env)
+        artifact_dir = Path(RUN_ROOT) / "channels" / "ocr" / "V1"
+        stage_manifest_path = artifact_dir / "channel_stage_manifest.json"
+        stage_manifest = (
+            json.loads(stage_manifest_path.read_text(encoding="utf-8"))
+            if stage_manifest_path.is_file()
+            else {}
+        )
+        manifest = {
+            "format": "hcmaic-skillpixel-kis-kaggle-ocr-job-v1",
+            "mode": "ocr-only",
+            "source_dataset": SOURCE_DATASET,
+            "raw_dataset": RAW_DATASET,
+            "source_dataset_path": SOURCE_INPUT,
+            "raw_input": resolved_raw_input,
+            "run_root": RUN_ROOT,
+            "artifact_dir": str(artifact_dir),
+            "stage_manifest": stage_manifest,
+            "provider": "paddleocr",
+            "requested_model": "PP-OCRv6",
+            "requested_device": REQUESTED_DEVICE,
+            "selected_device": execution_device,
+            "device_details": device_details,
+            "allow_model_download": allow_optional_download,
+            "training_status": "not_run",
+            "raw_video_source": True,
+            "btc_artifacts_used": False,
+            "quality_status": "UNVALIDATED_ON_HCMAIC",
+        }
+        Path(RUN_ROOT).mkdir(parents=True, exist_ok=True)
+        Path(RUN_ROOT, "kaggle_ocr_job_manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(json.dumps({"status": "completed", "run_root": RUN_ROOT, "mode": "ocr-only"}))
+        return 0
     resolved_raw_input = _resolve_input_path(RAW_INPUT, suffix="*.mp4", return_parent=True)
     resolved_questions = _resolve_input_path(QUESTIONS, suffix="questions.csv")
     resolved_corpus = _resolve_input_path(CORPUS, suffix="corpus.csv")
