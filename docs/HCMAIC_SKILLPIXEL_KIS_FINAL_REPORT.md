@@ -1,22 +1,75 @@
 # HCMAIC SkillPixel KIS — implementation and verification report
 
-Date: 2026-08-06  
+Date: 2026-08-07
 Repository: [HCMAIC-SkillPixel-KIS](https://github.com/lenamkhanhh/HCMAIC-SkillPixel-KIS)  
 Branch: `main`  
 Quality status: `UNVALIDATED_ON_HCMAIC`
 
 ## Executive result
 
-The raw-video-first SkillPixel TKIS/VKIS path is implemented and has been run
-locally end to end. The verified run used 250 raw videos, 9,835 sampled frames,
-100 queries (50 TKIS and 50 VKIS), real local SigLIP2, normalized float32 exact
-FAISS `IndexFlatIP`, strict ID mapping, hybrid runtime routing, evidence export,
-and submission validation. The output contains 100 answers for every query and
-passes the final validator.
+The raw-video-first SkillPixel TKIS/VKIS path is implemented and has now been
+run locally end to end with the canonical raw-video package and all available
+real retrieval channels. The authoritative run used 250 raw videos, 9,835
+sampled frames, 100 queries (50 TKIS and 50 VKIS), real local SigLIP2, normalized
+float32 exact FAISS `IndexFlatIP`, OCR/BM25, object retrieval, timestamped ASR,
+RRF, source-frame deduplication/diversity, and a cached real
+`cross-encoder/ms-marco-MiniLM-L-6-v2` reranker. The output contains 100
+answers for every query and passes the independent final validator.
 
 No official HCMAIC qrels were available. Therefore this report does not claim
 Recall, MRR, SOTA, top-1 quality, or contest score. The only quality statement
 that is justified is `UNVALIDATED_ON_HCMAIC`.
+
+## Authoritative final canonical hybrid run (2026-08-07)
+
+Artifact root (kept outside Git):
+
+`D:\Kaggle\skillpixel-kis-final-v1`
+
+This run is the source of truth for the current report. Its `raw` directory is
+a junction to the checksum-verified canonical raw package
+`D:\Kaggle\skillpixel-kis-canonical-raw-v2`; no BTC keyframe/mapping/feature
+artifact or teammate data was used. All four fused channels carry the same
+dataset manifest hash
+`6f4fffefb26f09593abc15c4eb9ca2e77dde564a476fa6b44637da97df284b1e` and raw
+catalog SHA256
+`266780726a041a5f5cea40f91d38509b1b583de3f239ad46393bb3d9f7614bc9`.
+
+| Field | Verified result |
+| --- | --- |
+| Raw source | 250 videos, 9,835 stride-10 frames |
+| Visual index | FAISS `IndexFlatIP`, 9,835 vectors, 768D, L2-normalized float32 |
+| Visual provider | SigLIP2 `google/siglip2-base-patch16-224`, local revision `main`, CPU |
+| OCR | PaddleOCR 2.10.0, actual runtime `PaddleOCR-legacy`, 7,700 records |
+| Object | Ultralytics 8.4.115, `yolo11n.pt`, 15,949 detections |
+| ASR | faster-whisper 1.2.1, `small`, 663 timestamped segments |
+| Fusion | RRF, rank constant 60; visual/OCR/object/ASR weights all 1.0 |
+| Reranker | sentence-transformers 5.7.0 CrossEncoder, cached local weights, CPU |
+| Query mix | 50 TKIS + 50 VKIS, query order preserved |
+| Query batch | 267,425 ms total; 2,674 ms mean/query |
+| Peak reported RAM | 1,496 MB |
+| Evidence | 10,000 top-100 rows and 2,000 top-20 rows |
+| Submission | 100 query rows; 100 answers/query; validator PASS |
+| Mapping | FAISS/catalog round-trip: 9,835 checked, 0 errors |
+
+The final validation report is `validation_final.json` with `valid=true`,
+`raw_video_source=true`, `btc_artifacts_used=false`, and
+`quality_status=UNVALIDATED_ON_HCMAIC`. The submission is:
+
+`D:\Kaggle\skillpixel-kis-final-v1\submission_V1.csv`
+
+Stable output hashes:
+
+- `submission_V1.csv`: `a5430ade4f7784d41f117b3321a14b580172b679998ffe6d978c03ad84a94b46`
+- `retrieval_evidence_top20.jsonl`: `fd2f7a7623842c8d8a9142c59a3c7eca742d1cc0b5bca99aab6f212346d96839`
+- `retrieval_evidence_top100.jsonl`: `fe79f6471d8e86bac7965e244ab111b8c2a3abd7b5072fe550f04ed0d294b751`
+- `model_registry.json`: `f7488fdd15fb7a04dac562f9e2b94093679b856c08b699bdcfc66299e7ac1065`
+- `checksums.sha256`: `9f587b1ccbf47ba5264faa7049c751e99f3a1d6f530e113673d969e21032410e`
+
+The final evidence rows include `query_id`, `rank`, `video_id`,
+`video_filename`, `frame_uid`, `source_frame_idx`, `timestamp_ms`, fused score,
+rerank score, per-channel score/evidence and provider metadata. `submission.csv`
+and `submission_V1.csv` are byte-identical.
 
 ## Data and mapping contract
 
@@ -38,9 +91,9 @@ verified run was `uniform_stride_10_v1`. The round-trip test and final validator
 checked `faiss_ntotal=9835`, `id_map_rows=9835`, `n_errors=0`; submission IDs
 are generated from `video_filename,source_frame_idx`, never from `faiss_row`.
 
-## Verified local run
+## Historical visual-only local run
 
-Artifact root:
+Artifact root (retained as an earlier visual-only baseline):
 
 `D:\Kaggle\skillpixel-kis-local-infer-v8b`
 
@@ -96,16 +149,18 @@ validated structurally, while stable evidence/artifact files remain hashed.
 | --- | --- | --- |
 | Visual | SigLIP2 image/text provider, L2 normalization, exact FAISS | Ran successfully: real 768D provider, 9,835 vectors |
 | Visual fallback | Real CLIP provider with explicit selection metadata | Implemented; not silently selected in the verified SigLIP2 run |
-| Jina CLIP v2 | Native image/text adapter and strict benchmark runner | Local cache probe failed explicitly; no CLIP fallback; Kaggle benchmark prepared but no published result yet |
-| OCR/BM25 | Real PaddleOCR adapter plus BM25 artifact/channel | Local weights unavailable; no fake artifact written; Kaggle v11 requested it, output still pending |
-| Object | Real Ultralytics adapter plus object retrieval artifact/channel | Local weights unavailable; no fake artifact written; Kaggle v11 requested it, output still pending |
-| ASR | Real faster-whisper adapter with timestamp-to-frame mapping | Disabled by policy locally; no audio/transcript artifact available |
-| Fusion | Visual plus optional channel scores, RRF, dedup/diversity and bounded rerank | Executed with visual channel; optional channels are fail-closed and recorded |
-| Reranker | Explicit real CrossEncoder path, local-cache/download policy | Implemented and tested; not promoted without qrels and not included in the verified baseline |
+| Jina CLIP v2 | Native image/text adapter and strict separate-index runner | `JINA_UNAVAILABLE_KAGGLE_PROVIDER_ERROR`; no fallback and no mixed vector space |
+| OCR/BM25 | Real PaddleOCR artifact plus BM25 retrieval channel | PASS: 7,700 records, same canonical dataset/catalog hashes |
+| Object | Real Ultralytics artifact plus object retrieval channel | PASS: 15,949 detections, same canonical dataset/catalog hashes |
+| ASR | Real faster-whisper artifact with timestamp-to-frame mapping | PASS: 663 segments, same canonical dataset/catalog hashes; runtime explicitly enabled for this run |
+| Fusion | Visual plus OCR/object/ASR scores, RRF, source-frame dedup/diversity | PASS: all four channels executed for 100 queries |
+| Reranker | Explicit real CrossEncoder path, local-cache/download policy | PASS: cached `ms-marco-MiniLM-L-6-v2`, sentence-transformers 5.7.0, CPU |
 
-The local optional-stage commands failed closed with the expected errors:
-PP-OCR model not cached, Ultralytics weights not cached, and Whisper weights not
-cached. None of those failures produced an empty/mock submission artifact.
+The historical local optional-stage probes failed closed when their model
+weights were absent. The final run used independently verified Kaggle-produced
+OCR/object/ASR artifacts copied outside Git; their manifests, checksums, and
+mapping validators passed before the channels were enabled. No empty or mock
+channel artifact was used.
 
 ## Kaggle execution
 
@@ -121,57 +176,74 @@ The package contains only source/config/runner files. It excludes raw videos,
 weights, embeddings, FAISS indexes, secrets, and tokens. The current package was
 built from public-repo commit `811264b` and includes the explicit Jina runner.
 
-Kernel:
+Historical kernel:
 
 `khanhss/skillpixel-kis-gpu-end-to-end-v1`
 
-The v11 baseline job was dispatched with raw SkillPixel and query inputs and
-without mounting the old self-generated index. It rebuilds the visual index
-from raw videos. At the last bounded poll it was still
-`KernelWorkerStatus.RUNNING`, and `kaggle kernels output` had not published
-files. A Jina-enabled v12 package was prepared, but dispatch was rejected with
-`Maximum batch GPU session count of 2 reached`. This is a runtime-slot blocker,
-not an authentication failure. No Kaggle result is claimed until an output
-manifest is actually downloaded and validated.
+The earlier v11/v12 jobs remain historical execution attempts. Their output is
+not used by the authoritative final run: one had no published output at the
+last bounded poll, and the Jina-enabled attempt was rejected by the two-session
+GPU limit. The final OCR, object, and ASR artifacts used here were downloaded
+from separate, completed GPU jobs and passed local checksum/mapping validation.
+Jina remains unavailable and is not a blocker for the main submission.
 
-## Reproduce locally
+## Reproduce the authoritative inference locally
 
-Use a fresh environment and keep all paths explicit:
+Keep generated raw/channel/index artifacts outside Git and keep every path
+explicit. The verified machine used `.venv-kis-final` because the older `uv`
+environment had a broken NumPy namespace (`numpy.load` was unavailable). This
+is an environment issue, not a model fallback.
 
 ```powershell
 cd D:\Code\Code\AIO\Code\HCMAIC-SkillPixel-KIS
-$env:UV_PROJECT_ENVIRONMENT = ".venv-kis"
 $env:SKILLPIXEL_RAW_INPUT = "D:\Code\Code\AIO\Code\HCMAIC\learn\skillpixel\Buoi_08_Mock_contest_KIS\DataMockTest\videos"
 $env:SKILLPIXEL_QUESTIONS = "D:\Code\Code\AIO\Code\HCMAIC\learn\skillpixel\Buoi_08_Mock_contest_KIS\DataMockTest\questions.csv"
 $env:SKILLPIXEL_CORPUS = "D:\Code\Code\AIO\Code\HCMAIC\learn\skillpixel\Buoi_08_Mock_contest_KIS\DataMockTest\corpus.csv"
-$env:SKILLPIXEL_RUN_ROOT = "D:\Kaggle\skillpixel-kis-local-infer-v8b"
+$env:SKILLPIXEL_RUN_ROOT = "D:\Kaggle\skillpixel-kis-final-v1"
+$env:SKILLPIXEL_MODEL_ID = "V1"
 $env:SKILLPIXEL_MODEL_PATH = "D:\Models\hf\siglip2-base-patch16-224"
 $env:SKILLPIXEL_PROVIDER = "siglip2"
 $env:SKILLPIXEL_LOCAL_FILES_ONLY = "true"
+$env:SKILLPIXEL_ALLOW_MODEL_DOWNLOAD = "false"
+$env:SKILLPIXEL_DEVICE = "cpu"
+$env:SKILLPIXEL_ENABLE_ASR_RUNTIME = "true"
+$env:SKILLPIXEL_RERANKER = "cross-encoder"
+$env:SKILLPIXEL_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+$env:SKILLPIXEL_RERANKER_MODEL_PATH = "C:\Users\HP\.cache\huggingface\hub\models--cross-encoder--ms-marco-MiniLM-L-6-v2\snapshots\c5ee24cb16019beea0893ab7796b1df96625c6b8"
+$py = ".\.venv-kis-final\Scripts\python.exe"
 
-uv run python scripts\skillpixel_kis_build.py --config configs\skillpixel_kis.yaml --stage catalog
-uv run python scripts\skillpixel_kis_build.py --config configs\skillpixel_kis.yaml --stage visual --model-id V1
-uv run python scripts\skillpixel_kis_infer.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT --top-k 100
-uv run python scripts\skillpixel_kis_validate.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT
+& $py scripts\skillpixel_kis_infer.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT --top-k 100
+& $py scripts\skillpixel_kis_validate.py --config configs\skillpixel_kis.yaml --run-dir $env:SKILLPIXEL_RUN_ROOT
 ```
 
-Optional OCR/object/ASR stages require explicit cached model paths or the
-explicit `--allow-model-download` flag. Jina uses
-`scripts\skillpixel_kis_jina_benchmark.py` with `--allow-model-download` and
-never falls back to another provider.
+To rebuild the visual index from the canonical raw root, run the catalog and
+visual build stages first and point `SKILLPIXEL_RUN_ROOT` at the new run. OCR,
+object, and ASR stages require their own explicit cached/GPU model packages;
+their completed manifests must match the canonical dataset/catalog hashes before
+copying them into `run\channels\{ocr,object,asr}\V1`. Jina uses
+`scripts\skillpixel_kis_jina_benchmark.py` with a separate index and never
+falls back to another provider.
 
 ## Verification commands
 
 ```powershell
-$env:UV_PROJECT_ENVIRONMENT = ".venv-kis"
 uv run pytest
 uv run ruff check src tests scripts
 uv run mypy src
+
+.\.venv-kis-final\Scripts\python.exe -m pytest
+.\.venv-kis-final\Scripts\python.exe -m ruff check src tests scripts
+.\.venv-kis-final\Scripts\python.exe -m mypy src
 ```
 
-Observed result: `272 passed, 1 warning in 22.09s`; Ruff passed; Mypy passed on
-68 source files. The warning is the existing Starlette/httpx deprecation
-warning from the test environment.
+Observed fallback result: `.venv-kis-final` gave `280 passed, 1 warning in
+27.79s`; Ruff passed; Mypy reported no issues in 68 source files. The warning
+is the existing Starlette/httpx deprecation warning. The required `uv run
+pytest` collection failed because its `.venv` has a broken NumPy/OpenCV install
+(`numpy.core.multiarray` is unavailable), and `uv run mypy src` failed because
+that same environment exposes NumPy without importable stubs. `uv run ruff`
+passed. No source change or silent dependency replacement was made to hide the
+environment blocker.
 
 ## Commit history and rollback
 
