@@ -3,6 +3,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from hcmaic.retrieval.channel_runner import (
     build_object_channel,
@@ -36,6 +37,18 @@ class _OCRProvider:
             "weights_sha256": "ocr-sha",
             "runtime": {"device": "cpu", "batch_size": batch_size},
         }
+
+
+class _InterruptingOCRProvider(_OCRProvider):
+    def __init__(self, fail_on_call: int) -> None:
+        self.fail_on_call = fail_on_call
+        self.calls = 0
+
+    def infer_image(self, image_path: Path):
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise RuntimeError("simulated OCR interruption")
+        return super().infer_image(image_path)
 
 
 class _ObjectProvider:
@@ -72,6 +85,33 @@ def test_ocr_runner_maps_raw_catalog_and_builds_bm25_artifact(tmp_path: Path) ->
     ]
     assert artifact.manifest["model_source_url"] == "https://example.invalid/ocr"
     assert artifact.manifest["weights_sha256"] == "ocr-sha"
+
+
+def test_ocr_runner_checkpoints_and_resumes_after_interruption(tmp_path: Path) -> None:
+    _write_video(tmp_path / "videos" / "demo.avi")
+    raw_root = tmp_path / "raw"
+    ingest_raw_videos(tmp_path / "videos", raw_root, stride_frames=2)
+    output_dir = tmp_path / "channels" / "ocr"
+
+    with pytest.raises(RuntimeError, match="simulated OCR interruption"):
+        build_ocr_channel(
+            raw_root,
+            output_dir,
+            _InterruptingOCRProvider(fail_on_call=3),
+        )
+
+    checkpoint_path = output_dir.with_name(f"{output_dir.name}.checkpoint.jsonl")
+    assert checkpoint_path.is_file()
+    assert len(checkpoint_path.read_text(encoding="utf-8").splitlines()) == 2
+
+    resumed_provider = _InterruptingOCRProvider(fail_on_call=99)
+    result = build_ocr_channel(raw_root, output_dir, resumed_provider)
+
+    assert result.status == "built"
+    assert result.n_input_frames == 3
+    assert result.n_records == 3
+    assert resumed_provider.calls == 1
+    assert not checkpoint_path.exists()
 
 
 def test_object_runner_deduplicates_labels_and_preserves_source_mapping(tmp_path: Path) -> None:
