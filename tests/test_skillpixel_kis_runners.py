@@ -14,8 +14,10 @@ from scripts.skillpixel_kis_build import (
     provider_model_kwargs,
 )
 from scripts.skillpixel_kis_kaggle_kernel import (
+    _assert_cuda_for_ocr,
     _device_from_probe,
     _jina_benchmark_command,
+    _ocr_only_command_sequence,
     _resolve_input_path,
     _restore_index,
 )
@@ -169,6 +171,27 @@ def test_kaggle_runner_keeps_cuda_for_supported_gpu():
 
     assert device == "cuda"
     assert details["compute_capability"] == "sm_75"
+
+
+def test_kaggle_ocr_only_fails_closed_when_cuda_is_unavailable():
+    with pytest.raises(RuntimeError, match="OCR-only Kaggle job requires CUDA"):
+        _assert_cuda_for_ocr("cpu", {"reason": "cuda_unavailable"})
+
+    _assert_cuda_for_ocr("cuda", {"device_name": "Tesla T4"})
+
+
+def test_kaggle_ocr_only_runs_catalog_then_ocr_without_query_or_visual_steps():
+    commands = _ocr_only_command_sequence(
+        python="python",
+        config="configs/skillpixel_kis.yaml",
+        allow_model_download=True,
+    )
+
+    assert [command[command.index("--stage") + 1] for command in commands] == [
+        "catalog",
+        "ocr",
+    ]
+    assert all("skillpixel_kis_infer.py" not in command for command in commands)
 
 
 def test_kaggle_runner_jina_command_is_explicit_and_no_fallback():
