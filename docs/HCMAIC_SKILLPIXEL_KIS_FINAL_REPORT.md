@@ -215,3 +215,58 @@ history immediately before `027f805` plus the preserved upstream commits.
 - ASR, TRAKE, and Q&A are intentionally outside this implementation scope.
 - Generated data/index/weights are kept outside Git. Re-run the commands above
   to regenerate them from raw input.
+
+## Post-pause channel update (2026-08-07)
+
+This section records the first externally executed optional channel after the
+pause. It supersedes the older Kaggle-pending notes above for OCR only; no
+generated output is committed to this repository.
+
+### OCR GPU artifact: PASS at artifact and mapping level
+
+- Kernel: `khanhss/skillpixel-kis-ocr-gpu-v1`, version 8.
+- Job URL: https://www.kaggle.com/code/khanhss/skillpixel-kis-ocr-gpu-v1
+- Raw source: `trieu241007/kis-skillpixel`, rebuilt independently from raw
+  videos; BTC keyframes/mappings/features and teammate artifacts were not
+  mounted.
+- Requested device: CUDA on `NvidiaTeslaT4`; actual Paddle device: CUDA with
+  device count 2 and device name `Tesla T4`.
+- Provider actually executed: `paddleocr` 2.10.0, actual model/revision
+  `PaddleOCR-legacy`. `PP-OCRv6` was the requested label, but the manifest is
+  deliberately reported with the legacy runtime identity; no silent model
+  substitution occurred.
+- Input: 250 raw videos, 9,835 sampled frames, stride 10.
+- OCR output: 7,700 non-empty OCR records. The remaining 2,135 scanned frames
+  had no OCR record under the channel schema; they were not skipped as input.
+- Dataset hash: `6f4fffefb26f09593abc15c4eb9ca2e77dde564a476fa6b44637da97df284b1e`.
+- Raw catalog SHA256:
+  `266780726a041a5f5cea40f91d38509b1b583de3f239ad46393bb3d9f7614bc9`.
+- Mapping validation: 7,700/7,700 OCR records round-tripped through the raw
+  catalog with zero errors for `frame_uid`, `video_id`, `video_filename`,
+  `source_frame_idx`, and `timestamp_ms`.
+- Quality gate: `UNVALIDATED_ON_HCMAIC` because no official HCMAIC qrels were
+  available. This is an artifact-validity result, not a quality or SOTA claim.
+
+Downloaded verification artifacts are kept outside Git:
+
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\kaggle_ocr_job_manifest.json`
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\raw\dataset_manifest.json`
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\raw\catalog.jsonl`
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\channels\ocr\V1\ocr.jsonl`
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\channels\ocr\V1\ocr_manifest.json`
+- `D:\Kaggle\skillpixel-kis-ocr-gpu-v8-output\skillpixel-kis-run-v1\channels\ocr\V1\channel_stage_manifest.json`
+
+### Jina status at this checkpoint
+
+The first Jina dispatch failed before repository startup because Kaggle
+mounted the source package under a path different from the hard-coded path.
+Read-only dataset inspection confirmed that the source dataset exists. The
+runner was corrected to resolve the mounted package by its `pyproject.toml`
+and `src/hcmaic` contract, then one controlled version 2 was dispatched with
+the exact `NvidiaTeslaT4` accelerator. It is still `RUNNING` at the time of
+this update; no Jina model, index, score, or fusion result is claimed yet.
+
+The Jina runner is strict: it requests `jinaai/jina-clip-v2`, uses a separate
+`visual/jina-clip-v2` index, and sets `allow_fallback=false`. A model/cache or
+quota failure will be recorded as unavailable rather than silently converted
+to CLIP or SigLIP2.
