@@ -275,6 +275,36 @@ inner model/dependency exception is not available in the downloaded Kaggle
 log. This is recorded as `JINA_UNAVAILABLE_KAGGLE_PROVIDER_ERROR`, with no
 fallback to CLIP or SigLIP2 and no further retry.
 
+### ASR GPU artifact: PASS at artifact and mapping level
+
+- Kernel: `khanhss/skillpixel-kis-asr-gpu-v1`, version 1.
+- Job URL: https://www.kaggle.com/code/khanhss/skillpixel-kis-asr-gpu-v1
+- Raw source: `trieu241007/kis-skillpixel`; only raw videos and the public
+  source package were mounted.
+- Requested/actual runtime: `NvidiaTeslaT4`, CUDA, two Tesla T4 devices;
+  `ffprobe` was available.
+- Provider actually executed: `faster-whisper` 1.2.1, model `small`,
+  `float16` compute on CUDA. No mock transcript and no CPU fallback were used.
+- Input: 250 raw videos and 9,835 raw sampled frames under the same dataset
+  hash and raw catalog SHA256 as the validated OCR artifact.
+- Output: 663 timestamped transcript segments across 188 videos. Each record
+  carries `start_ms`, `end_ms`, `frame_uid`, `video_id`, `video_filename`,
+  `source_frame_idx`, and `timestamp_ms`.
+- Mapping validation: 663/663 records round-tripped through the 9,835-row raw
+  catalog with zero errors. The 663 segments map to 661 unique frames because
+  multiple transcript segments can share the nearest sampled frame.
+- Artifact checksums: all four job-manifest checksums matched downloaded files.
+- Quality gate: `UNVALIDATED_ON_HCMAIC`; no qrels or promotion claim.
+
+Downloaded ASR verification artifacts are kept outside Git:
+
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\kaggle_asr_job_manifest.json`
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\raw\dataset_manifest.json`
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\raw\catalog.jsonl`
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\channels\asr\V1\asr.jsonl`
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\channels\asr\V1\asr_manifest.json`
+- `D:\Kaggle\skillpixel-kis-asr-gpu-v1-output\skillpixel-kis-asr-run-v1\channels\asr\V1\channel_stage_manifest.json`
+
 The Jina runner is strict: it requests `jinaai/jina-clip-v2`, uses a separate
 `visual/jina-clip-v2` index, and sets `allow_fallback=false`. A model/cache or
 quota failure will be recorded as unavailable rather than silently converted
