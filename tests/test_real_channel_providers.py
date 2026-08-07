@@ -32,6 +32,24 @@ def test_paddleocr_constructor_disables_windows_mkldnn_runtime_path() -> None:
     assert captured["enable_mkldnn"] is False
 
 
+def test_paddleocr_legacy_constructor_requests_cuda_without_silent_cpu_fallback() -> None:
+    provider = PaddleOCRFrameProvider.__new__(PaddleOCRFrameProvider)
+    provider.device = "cuda"
+    provider.model_path = None
+    captured: dict[str, object] = {}
+
+    class LegacyPaddleOCR:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    provider._construct(LegacyPaddleOCR, "PP-OCRv6")
+
+    assert captured["use_gpu"] is True
+    assert captured["use_angle_cls"] is False
+    assert captured["enable_mkldnn"] is False
+    assert provider.actual_model_version == "PaddleOCR-legacy"
+
+
 def _frame(
     *,
     frame_id: str = "video1:000",
