@@ -11,8 +11,12 @@ import sys
 import time
 from pathlib import Path
 
-SOURCE_DATASET = "khanhss/hcmaic-skillpixel-kis-source-20260806"
-SOURCE_INPUT = "/kaggle/input/hcmaic-skillpixel-kis-source-20260806"
+SOURCE_DATASET = os.environ.get(
+    "SKILLPIXEL_SOURCE_DATASET", "khanhss/hcmaic-skillpixel-kis-source-20260806"
+)
+SOURCE_INPUT = os.environ.get(
+    "SKILLPIXEL_SOURCE_INPUT", "/kaggle/input/hcmaic-skillpixel-kis-source-20260806"
+)
 RAW_INPUT = "/kaggle/input/kis-skillpixel/videos"
 RAW_DATASET = "trieu241007/kis-skillpixel"
 QUESTIONS = "/kaggle/input/skillpixel-kis-query-input-20260806/questions.csv"
