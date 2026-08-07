@@ -323,6 +323,7 @@ class PaddleOCRFrameProvider:
         self.allow_model_download = allow_model_download
         self.actual_model_version = model_version
         self.fallback_from: str | None = None
+        self.legacy_runtime = False
         self._engine = self._build_engine()
 
     @property
@@ -369,13 +370,33 @@ class PaddleOCRFrameProvider:
     def _construct(self, constructor: Any, version: str) -> Any:
         signature = inspect.signature(constructor)
         parameters = signature.parameters
-        kwargs: dict[str, Any] = {
-            "ocr_version": version,
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_textline_orientation": False,
-            "device": self.device,
-        }
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        legacy_api = "ocr_version" not in parameters
+        if legacy_api:
+            # PaddleOCR 2.x exposes GPU selection as use_gpu and does not know
+            # the 3.x ocr_version/device contract.  Keep this explicit so a
+            # Kaggle Python 3.12 runtime cannot silently fall back to CPU.
+            self.legacy_runtime = True
+            self.actual_model_version = "PaddleOCR-legacy"
+            kwargs: dict[str, Any] = {
+                "use_gpu": self.device.casefold() in {"cuda", "gpu"},
+                "use_angle_cls": False,
+                "enable_mkldnn": False,
+            }
+            if self.model_path is not None:
+                for key in ("det_model_dir", "rec_model_dir", "cls_model_dir"):
+                    kwargs[key] = str(self.model_path)
+        else:
+            kwargs = {
+                "ocr_version": version,
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False,
+                "use_textline_orientation": False,
+                "device": self.device,
+            }
         if self.model_path is not None:
             for key in (
                 "model_dir",
@@ -386,10 +407,6 @@ class PaddleOCRFrameProvider:
                     kwargs[key] = str(self.model_path)
                     if key != "model_dir":
                         break
-        accepts_kwargs = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        )
         if "enable_mkldnn" in parameters or accepts_kwargs:
             # PaddleOCR 3.x routes this flag through **kwargs.  Disabling
             # oneDNN avoids a known Windows CPU PIR runtime failure while
@@ -397,7 +414,13 @@ class PaddleOCRFrameProvider:
             kwargs["enable_mkldnn"] = False
         supported = {key: value for key, value in kwargs.items() if key in parameters}
         if accepts_kwargs:
-            supported["enable_mkldnn"] = False
+            supported.update(
+                {
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in {"enable_mkldnn", "use_gpu", "use_angle_cls"}
+                }
+            )
         return constructor(**supported)
 
     def infer_image(self, image_path: Path) -> list[OCRObservation]:
@@ -418,6 +441,7 @@ class PaddleOCRFrameProvider:
         return {
             "model_source_url": PP_OCRV6_SOURCE_URL,
             "model_id": self.actual_model_version,
+            "actual_model_id": self.actual_model_version,
             "requested_model_id": self.requested_model_version,
             "model_version": self.actual_model_version,
             "weights_path": str(self.model_path) if self.model_path is not None else None,
@@ -428,6 +452,7 @@ class PaddleOCRFrameProvider:
                 "device": self.device,
                 "batch_size": batch_size,
                 "enable_mkldnn": False,
+                "legacy_runtime": self.legacy_runtime,
             },
             "fallback_from": self.fallback_from,
             "provider_evidence": "REAL_PROVIDER_ARTIFACT",

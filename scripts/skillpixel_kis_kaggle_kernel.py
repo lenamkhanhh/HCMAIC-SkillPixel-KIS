@@ -67,7 +67,7 @@ def _ensure_paddle_for_ocr(*, require_cuda: bool) -> None:
             "install",
             "--quiet",
             "--upgrade",
-            "paddlepaddle-gpu>=3.0",
+            os.environ.get("SKILLPIXEL_PADDLE_GPU_PACKAGE", "paddlepaddle-gpu==2.6.2"),
         ]
     )
     importlib.invalidate_caches()
@@ -281,7 +281,10 @@ def main() -> int:
         raise ValueError("SKILLPIXEL_OCR_ONLY requires SKILLPIXEL_RUN_OCR=true")
     if run_ocr:
         _ensure_paddle_for_ocr(require_cuda=ocr_only)
-        _ensure_dependency("paddleocr", "paddleocr>=3.0")
+        _ensure_dependency(
+            "paddleocr",
+            "paddleocr>=2.10,<3" if ocr_only else "paddleocr>=3.0",
+        )
     if run_object:
         _ensure_dependency("ultralytics", "ultralytics>=8.3")
     if run_asr:
