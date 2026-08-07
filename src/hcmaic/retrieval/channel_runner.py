@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -160,6 +161,124 @@ def _write_stage_manifest(output_dir: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def _ocr_checkpoint_paths(output_dir: Path) -> tuple[Path, Path]:
+    output_dir = Path(output_dir)
+    return (
+        output_dir.with_name(f"{output_dir.name}.checkpoint.jsonl"),
+        output_dir.with_name(f"{output_dir.name}.checkpoint.json"),
+    )
+
+
+def _write_ocr_checkpoint_manifest(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _load_ocr_checkpoint(
+    output_dir: Path,
+    *,
+    dataset_hash: str,
+    raw_catalog_sha256: str,
+    n_input_frames: int,
+    provider: str,
+    revision: str,
+    valid_frame_uids: set[str],
+) -> tuple[set[str], list[OCRRecord]]:
+    records_path, manifest_path = _ocr_checkpoint_paths(output_dir)
+    if not records_path.exists() and not manifest_path.exists():
+        return set(), []
+    if not records_path.is_file() or not manifest_path.is_file():
+        raise ValueError(
+            "OCR checkpoint is incomplete; both checkpoint JSONL and manifest are required"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read OCR checkpoint manifest: {manifest_path}") from exc
+    expected = {
+        "dataset_hash": dataset_hash,
+        "raw_catalog_sha256": raw_catalog_sha256,
+        "n_input_frames": n_input_frames,
+        "provider": provider,
+        "revision": revision,
+    }
+    mismatches = {
+        key: (manifest.get(key), value)
+        for key, value in expected.items()
+        if manifest.get(key) != value
+    }
+    if mismatches:
+        raise ValueError(f"OCR checkpoint identity mismatch: {mismatches}")
+
+    processed_frame_uids: set[str] = set()
+    records: list[OCRRecord] = []
+    try:
+        lines = records_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"cannot read OCR checkpoint records: {records_path}") from exc
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            # A hard process stop can leave only the final JSONL line partial.
+            if line_number == len(lines):
+                break
+            raise ValueError(
+                f"invalid OCR checkpoint record at line {line_number}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"OCR checkpoint record {line_number} is not an object")
+        frame_uid = str(payload.get("frame_uid", "")).strip()
+        if not frame_uid or frame_uid not in valid_frame_uids:
+            raise ValueError(f"OCR checkpoint has unknown frame_uid: {frame_uid!r}")
+        if frame_uid in processed_frame_uids:
+            raise ValueError(f"OCR checkpoint has duplicate frame_uid: {frame_uid}")
+        processed_frame_uids.add(frame_uid)
+        record_payload = payload.get("record")
+        if record_payload is None:
+            continue
+        if not isinstance(record_payload, dict):
+            raise ValueError(f"OCR checkpoint record payload is invalid: {frame_uid}")
+        record = OCRRecord(**record_payload)
+        if record.frame_uid != frame_uid:
+            raise ValueError(f"OCR checkpoint frame identity mismatch: {frame_uid}")
+        if record.provider != provider or record.revision != revision:
+            raise ValueError(f"OCR checkpoint provider identity mismatch: {frame_uid}")
+        records.append(record)
+    if len(processed_frame_uids) > n_input_frames:
+        raise ValueError("OCR checkpoint contains more frames than the raw catalog")
+    return processed_frame_uids, records
+
+
+def _append_ocr_checkpoint(
+    handle: Any,
+    *,
+    frame_uid: str,
+    record: OCRRecord | None,
+) -> None:
+    payload = {
+        "frame_uid": frame_uid,
+        "record": record.to_dict() if record is not None else None,
+    }
+    handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def _remove_ocr_checkpoint(output_dir: Path) -> None:
+    records_path, manifest_path = _ocr_checkpoint_paths(output_dir)
+    for path in (records_path, manifest_path):
+        if path.exists():
+            path.unlink()
+
+
 def _resume_result(
     output_dir: Path,
     *,
@@ -243,21 +362,53 @@ def build_ocr_channel(
     )
     if resumed is not None:
         return resumed
-    _assert_new_or_resumable(output_dir)
     provider_name, revision = _provider_identity(provider)
-    records: list[OCRRecord] = []
-    for frame, image_path in pairs:
-        observations = [
-            _coerce_ocr_observation(item) for item in provider.infer_image(image_path)
-        ]
-        record = ocr_record_for_frame(
-            frame,
-            observations,
-            provider=provider_name,
-            revision=revision,
+    raw_catalog_sha256 = sha256_path(Path(raw_root) / "catalog.jsonl")
+    valid_frame_uids = {frame.frame_id for frame, _image_path in pairs}
+    processed_frame_uids, records = _load_ocr_checkpoint(
+        output_dir,
+        dataset_hash=dataset_hash,
+        raw_catalog_sha256=raw_catalog_sha256,
+        n_input_frames=len(pairs),
+        provider=provider_name,
+        revision=revision,
+        valid_frame_uids=valid_frame_uids,
+    )
+    _assert_new_or_resumable(output_dir)
+    checkpoint_records_path, checkpoint_manifest_path = _ocr_checkpoint_paths(output_dir)
+    if not checkpoint_manifest_path.exists():
+        _write_ocr_checkpoint_manifest(
+            checkpoint_manifest_path,
+            {
+                "format": "hcmaic-raw-ocr-checkpoint-v1",
+                "dataset_hash": dataset_hash,
+                "raw_catalog_sha256": raw_catalog_sha256,
+                "n_input_frames": len(pairs),
+                "provider": provider_name,
+                "revision": revision,
+            },
         )
-        if record is not None:
-            records.append(record)
+    with checkpoint_records_path.open("a", encoding="utf-8") as checkpoint_handle:
+        for frame, image_path in pairs:
+            if frame.frame_id in processed_frame_uids:
+                continue
+            observations = [
+                _coerce_ocr_observation(item) for item in provider.infer_image(image_path)
+            ]
+            record = ocr_record_for_frame(
+                frame,
+                observations,
+                provider=provider_name,
+                revision=revision,
+            )
+            if record is not None:
+                records.append(record)
+            _append_ocr_checkpoint(
+                checkpoint_handle,
+                frame_uid=frame.frame_id,
+                record=record,
+            )
+            processed_frame_uids.add(frame.frame_id)
     if not records:
         stage_path = _write_stage_manifest(
             output_dir,
@@ -269,6 +420,7 @@ def build_ocr_channel(
                 "n_records": 0,
             },
         )
+        _remove_ocr_checkpoint(output_dir)
         return ChannelRunResult(
             "ocr", "no_text_detected", None, stage_path, dataset_hash, len(pairs), 0, {}
         )
@@ -285,6 +437,7 @@ def build_ocr_channel(
             batch_size=batch_size,
         ),
     )
+    _remove_ocr_checkpoint(output_dir)
     stage_path = _write_stage_manifest(
         output_dir,
         {
