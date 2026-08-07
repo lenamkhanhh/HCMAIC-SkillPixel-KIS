@@ -267,6 +267,47 @@ def _select_execution_device() -> tuple[str, dict[str, object]]:
         return "cpu", {"reason": f"cuda_preflight_failed:{type(exc).__name__}"}
 
 
+def _ocr_device_from_probe(
+    *, compiled_with_cuda: bool, device_count: int, device_name: str | None
+) -> tuple[str, dict[str, object]]:
+    if not compiled_with_cuda or device_count < 1:
+        return "cpu", {
+            "provider": "paddle",
+            "reason": "paddle_cuda_unavailable",
+            "device_count": device_count,
+        }
+    return "cuda", {
+        "provider": "paddle",
+        "device_count": device_count,
+        "device_name": device_name,
+    }
+
+
+def _select_ocr_execution_device() -> tuple[str, dict[str, object]]:
+    """Probe Paddle directly so P100 is not rejected by a newer Torch build."""
+    try:
+        import paddle  # type: ignore[import-not-found,import-untyped]
+
+        compiled_with_cuda = bool(paddle.is_compiled_with_cuda())
+        device_count = int(paddle.device.cuda.device_count()) if compiled_with_cuda else 0
+        device_name: str | None = None
+        if device_count > 0:
+            try:
+                device_name = str(paddle.device.cuda.get_device_name(0))
+            except Exception:  # pragma: no cover - Paddle version dependent
+                device_name = None
+        return _ocr_device_from_probe(
+            compiled_with_cuda=compiled_with_cuda,
+            device_count=device_count,
+            device_name=device_name,
+        )
+    except Exception as exc:  # pragma: no cover - depends on Kaggle runtime
+        return "cpu", {
+            "provider": "paddle",
+            "reason": f"paddle_cuda_probe_failed:{type(exc).__name__}",
+        }
+
+
 def main() -> int:
     ocr_only = _env_flag("SKILLPIXEL_OCR_ONLY", default=False)
     _ensure_dependency("yaml", "pyyaml>=6.0,<7")
@@ -303,7 +344,10 @@ def main() -> int:
     )
     if not ocr_only:
         _download_public_model()
-    execution_device, device_details = _select_execution_device()
+    if ocr_only:
+        execution_device, device_details = _select_ocr_execution_device()
+    else:
+        execution_device, device_details = _select_execution_device()
     print(
         json.dumps(
             {
