@@ -19,6 +19,7 @@ from scripts.skillpixel_kis_kaggle_kernel import (
     _assert_cuda_for_ocr,
     _device_from_probe,
     _jina_benchmark_command,
+    _ocr_device_from_probe,
     _ocr_only_command_sequence,
     _resolve_input_path,
     _restore_index,
@@ -180,6 +181,26 @@ def test_kaggle_ocr_only_fails_closed_when_cuda_is_unavailable():
         _assert_cuda_for_ocr("cpu", {"reason": "cuda_unavailable"})
 
     _assert_cuda_for_ocr("cuda", {"device_name": "Tesla T4"})
+
+
+def test_kaggle_ocr_preflight_uses_paddle_cuda_not_torch_capability():
+    device, details = _ocr_device_from_probe(
+        compiled_with_cuda=True,
+        device_count=1,
+        device_name="Tesla P100-PCIE-16GB",
+    )
+
+    assert device == "cuda"
+    assert details["provider"] == "paddle"
+    assert details["device_name"] == "Tesla P100-PCIE-16GB"
+
+    device, details = _ocr_device_from_probe(
+        compiled_with_cuda=False,
+        device_count=1,
+        device_name=None,
+    )
+    assert device == "cpu"
+    assert details["reason"] == "paddle_cuda_unavailable"
 
 
 def test_kaggle_ocr_only_runs_catalog_then_ocr_without_query_or_visual_steps():
