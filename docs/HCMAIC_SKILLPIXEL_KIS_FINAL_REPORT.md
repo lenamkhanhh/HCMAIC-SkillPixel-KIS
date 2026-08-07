@@ -263,8 +263,17 @@ mounted the source package under a path different from the hard-coded path.
 Read-only dataset inspection confirmed that the source dataset exists. The
 runner was corrected to resolve the mounted package by its `pyproject.toml`
 and `src/hcmaic` contract, then one controlled version 2 was dispatched with
-the exact `NvidiaTeslaT4` accelerator. It is still `RUNNING` at the time of
-this update; no Jina model, index, score, or fusion result is claimed yet.
+the exact `NvidiaTeslaT4` accelerator. Version 2 passed the T4 preflight and
+rebuilt the 9,835-frame raw catalog, but ended `ERROR` when the Jina benchmark
+subprocess returned exit status 2. No Jina model, index, score, or fusion
+result was produced.
+
+The failure is not a quota or GPU-allocation failure: the log records two
+Tesla T4 devices and a successful raw catalog build. The wrapper captured the
+child provider stderr and only exposed the outer `CalledProcessError`, so the
+inner model/dependency exception is not available in the downloaded Kaggle
+log. This is recorded as `JINA_UNAVAILABLE_KAGGLE_PROVIDER_ERROR`, with no
+fallback to CLIP or SigLIP2 and no further retry.
 
 The Jina runner is strict: it requests `jinaai/jina-clip-v2`, uses a separate
 `visual/jina-clip-v2` index, and sets `allow_fallback=false`. A model/cache or
